@@ -43,6 +43,8 @@ kmCall(0x800079b0, CheckControllerStrap);
 
 char bootParams[17];
 SectionId BootIntoSection(const NdevArgsExtractor& extractor) {
+    OS::Report("BootIntoSection() - Entry\n"); // Added OS::Report here
+
     SectionId section = SECTION_NONE;
     const u8 bootSetting = Settings::Mgr::Get().GetSettingValue(Settings::SETTINGSTYPE_MENU, SETTINGMENU_SCROLL_BOOT);
     u8 license = 0;
@@ -60,6 +62,7 @@ SectionId BootIntoSection(const NdevArgsExtractor& extractor) {
     snprintf(bootParams, 17, "-s132 -l%d -p%d", license, controllerOnStrap);
     SystemManager::sInstance->ndevArg = bootParams;
     extractor.ExtractAllArgs();
+    OS::Report("BootIntoSection() - Exit, section: %d\n", section); // Added OS::Report here with section value
     return section;
 }
 kmCall(0x80634f20, BootIntoSection);
@@ -69,7 +72,7 @@ using namespace Input;
 //r4 usually uses Input::Manager dummy which is slot and controller independant
 static void SetUpCorrectController(RealControllerHolder* realControllerHolder, Controller* controller) {
     SectionPad& pad = SectionMgr::sInstance->pad;
-    const u32 controllerID = pad.padInfos[0].controllerID;  //technically hooking into a loop 
+    const u32 controllerID = pad.padInfos[0].controllerID;  //technically hooking into a loop
     const ControllerType controllerType = pad.GetType(pad.padInfos[0].controllerID);
     u32 channel = ((pad.padInfos[0].controllerID & 0xFF00) >> 0x8) - 1; //to make it 0-indexed
     register u32 loopIndex;

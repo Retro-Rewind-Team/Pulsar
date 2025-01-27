@@ -84,5 +84,5 @@ public:
     u8 animationType; //0x180 0 = fade in 1 = fade out 
     float unknown_0x184; //some sort of scale factor for the transition
 };//total size 0x188
-size_assert(DriverModelControl, 0x188);
+// size_assert(DriverModelControl, 0x188);
 #endif

@@ -137,6 +137,16 @@ end:
 }
 kmCall(0x8079F748, ItemVanish);
 
+asmFunc InstantFinish() {
+    ASM(
+  lis       r12, 0x3;
+  ori       r12, r12, 0x387;
+  stw       r12, 0x24(r30);
+  lha       r3, 0x24(r30);
+    )
+}
+kmCall(0x80535508, InstantFinish);
+
 void OTTPatch() {
   OTTFixHook = 0x00;
   if (Pulsar::System::sInstance->IsContext(Pulsar::PULSAR_MODE_OTT)) {

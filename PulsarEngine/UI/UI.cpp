@@ -12,6 +12,8 @@
 #include <AutoTrackSelect/ExpFroomMessages.hpp>
 #include <Settings/UI/ExpFroomPage.hpp>
 #include <Settings/UI/ExpOptionsPage.hpp>
+#include <UI/FroomKickPage.hpp>
+
 #include <Settings/UI/ExpWFCMainPage.hpp>
 #include <UI/ChangeCombo/ChangeCombo.hpp>
 
@@ -122,7 +124,12 @@ void ExpSection::CreatePulPages() {
         this->CreateAndInitPage(*this, PAGE_MESSAGEBOX);
         this->CreateAndInitPage(*this, PAGE_SELECT_STAGE_MGR);
     }
-    if(this->Get<ExpFroom>() != nullptr) this->CreateAndInitPage(*this, PULPAGE_TEAMSELECT); //can also put it as part of the case froom of createandinitpage
+    if(this->Get<ExpFroom>() != nullptr) {
+        this->CreateAndInitPage(*this, PULPAGE_TEAMSELECT);
+        this->CreateAndInitPage(*this, FroomKickPage::id); 
+        }
+        
+         //can also put it as part of the case froom of createandinitpage
 }
 
 void ExpSection::CreateAndInitPage(ExpSection& self, u32 id) {
@@ -207,6 +214,9 @@ void ExpSection::CreateAndInitPage(ExpSection& self, u32 id) {
             break;
         case SettingsPanel::id:
             page = new SettingsPanel;
+            break;
+        case FroomKickPage::id:
+            page = new FroomKickPage;
             break;
         default:
             page = self.CreatePageById(initId);

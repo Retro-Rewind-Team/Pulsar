@@ -22,7 +22,10 @@ public:
         this->onTeamsClickHandler.subject = this;
         this->onTeamsClickHandler.ptmf = &ExpFroom::OnTeamsButtonClick;
         this->onButtonSelectHandler.ptmf = &ExpFroom::ExtOnButtonSelect;
+        this->onKickPlayersClickHandler.subject = this;
+        this->onKickPlayersClickHandler.ptmf = &ExpFroom::OnKickPlayersButtonClick;
     }
+    PushButton kickPlayersButton;
     void OnInit() override;
     void AfterControlUpdate() override;
     void OnResume() override;
@@ -34,6 +37,8 @@ private:
     void OnTeamsButtonClick(PushButton& button, u32 hudSlotId);
     PtmfHolder_2A<ExpFroom, void, PushButton&, u32> onSettingsClickHandler;
     PtmfHolder_2A<ExpFroom, void, PushButton&, u32> onTeamsClickHandler;
+    PtmfHolder_2A<ExpFroom, void, PushButton&, u32> onKickPlayersClickHandler; // in the class
+    void ExpFroom::OnKickPlayersButtonClick(PushButton& button, u32 hudSlotId);
     PushButton settingsButton;
     PushButton teamsButton;
     bool areControlsHidden;
