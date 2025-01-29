@@ -1,57 +1,56 @@
-#ifndef _FROOMKICKPAGE_
-#define _FROOMKICKPAGE_
+// FroomKickPage.hpp
+#ifndef _FROOMKICKPAGE_HPP_
+#define _FROOMKICKPAGE_HPP_
 
 #include <kamek.hpp>
-#include <MarioKartWii/UI/Page/Menu/Menu.hpp>
-#include <MarioKartWii/UI/Page/Menu/MiiSelect.hpp>
-#include <MarioKartWii/RKNet/RKNetController.hpp>
-#include <MarioKartWii/MII/MiiGroup.hpp>
 #include <UI/UI.hpp>
-#include <UI/ToggleControls.hpp>
+#include <MarioKartWii/UI/Page/Menu/Menu.hpp>
+#include <MarioKartWii/UI/Ctrl/UIControl.hpp>
+#include <MarioKartWii/UI/Ctrl/PushButton.hpp>
+#include <MarioKartWii/RKNet/RKNetController.hpp>
 
 namespace Pulsar {
 namespace UI {
 
 class FroomKickPage : public Pages::MenuInteractable {
 public:
-    static const PulPageId id = PULPAGE_FROOMKICK;
+    static const PulPageId id = PULPAGE_FROOMKICK;  // Our unique page ID
 
     FroomKickPage();
 
-    // Standard Page vfunc overrides
+    // Page / MenuInteractable virtuals
     void OnInit() override;
     void BeforeEntranceAnimations() override;
     void BeforeControlUpdate() override;
+
     int GetActivePlayerBitfield() const override;
     int GetPlayerBitfield() const override;
     ManipulatorManager& GetManipulatorManager() override;
-    UIControl* CreateExternalControl(u32 externControlId) override;
-    UIControl* CreateControl(u32 controlId) override;
+    UIControl* CreateExternalControl(u32 id) override;
+    UIControl* CreateControl(u32 id) override;
     void SetButtonHandlers(PushButton& button) override;
-    
+    MiiGroup* miiGroup;
 
 private:
-    // PTMF Handlers for the "Kick" buttons and the "Back" press
+    // Handlers for the “Kick” buttons
     void OnKickClick(PushButton& button, u32 hudSlotId);
     void OnKickSelect(PushButton& button, u32 hudSlotId);
     void OnKickDeselect(PushButton& button, u32 hudSlotId);
+
+    // We override back-press to exit
     void OnBackPress(u32 hudSlotId);
 
-    // Helper to find which AID/Slot is associated with the clicked index
-    u8 CalcAIDFromIdx(u8 idx);
+    // PtmfHolders for push-button actions
+    PtmfHolder_2A<FroomKickPage, void, PushButton&, u32> onKickClickHandler;
+    PtmfHolder_2A<FroomKickPage, void, PushButton&, u32> onKickSelectHandler;
+    PtmfHolder_2A<FroomKickPage, void, PushButton&, u32> onKickDeselectHandler;
 
-    // Actually do the "kick"
-     void KickPlayer(u8 aid);
+    // Arrays for up to 12 possible external players
+    LayoutUIControl miis[12];     // Mii icon (like in TeamSelect)
+    PushButton kickButtons[12];   // Kick arrow/button
+    u8 arrowMiiIdx[12];           // AID stored for each slot
 
-    // UI elements
-    PushButton kickButtons[12];   // up to 12 potential players
-    LayoutUIControl miis[12];     // show Mii heads
-    MiiName name;                 // top “Mii name” text
-    MiiGroup *miiGroup;           // from friend-room manager
-    u8 arrowMiiIdx[12];           // store (aid*2+player) or 0xFF if invalid
-    Text::Info text;
-    bool isLocked;
-
+    bool isLocked;                // If we want to lock the page from changes
 };
 
 } // namespace UI

@@ -49,40 +49,14 @@ void ExpFroom::OnInit() {
     OS::Report("ExpFroom::OnInit() - Exit\n");
 }
 
+// ExpFroom.cpp (excerpt)
 void ExpFroom::OnKickPlayersButtonClick(PushButton& button, u32 hudSlotId) {
-    OS::Report("ExpFroom::OnKickPlayersButtonClick() - Entry\n");
+    // Hide the background friend-room controls so they don't overlap
+    this->areControlsHidden = true;
 
-    // Check if you are the host:
-    RKNet::Controller* controller = RKNet::Controller::sInstance;
-    if (!controller) {
-        OS::Report("ExpFroom::OnKickPlayersButtonClick() - ERROR: controller is NULL\n");
-        return;
-    }
-    OS::Report("ExpFroom::OnKickPlayersButtonClick() - controller is valid: %p\n", controller);
-
-    RKNet::ControllerSub& sub = controller->subs[controller->currentSub]; // Get ControllerSub
-    OS::Report("ExpFroom::OnKickPlayersButtonClick() - isHost: %d, localAid: %d, hostAid: %d\n", (sub.localAid == sub.hostAid), sub.localAid, sub.hostAid);
-
-    if(sub.localAid == sub.hostAid) {
-        OS::Report("ExpFroom::OnKickPlayersButtonClick() - User is host, proceeding to add KickPage\n");
-
-        // Before calling EndStateAnimated
-        OS::Report("ExpFroom::OnKickPlayersButtonClick() - Calling EndStateAnimated\n");
-        this->EndStateAnimated(0, button.GetAnimationFrameSize());
-        OS::Report("ExpFroom::OnKickPlayersButtonClick() - EndStateAnimated called successfully\n");
-
-        // Before calling AddPageLayer
-        OS::Report("ExpFroom::OnKickPlayersButtonClick() - Calling AddPageLayer with PageId: %d\n", FroomKickPage::id);
-        if (!SectionMgr::sInstance || !SectionMgr::sInstance->curSection) {
-            OS::Report("ExpFroom::OnKickPlayersButtonClick() - ERROR: SectionMgr::sInstance or curSection is NULL\n");
-            return;
-        }
-        SectionMgr::sInstance->curSection->AddPageLayer(static_cast<PageId>(FroomKickPage::id));
-        OS::Report("ExpFroom::OnKickPlayersButtonClick() - AddPageLayer(FroomKickPage::id) called\n");
-    } else {
-        OS::Report("ExpFroom::OnKickPlayersButtonClick() - User is not host, skipping AddPageLayer\n");
-    }
-    OS::Report("ExpFroom::OnKickPlayersButtonClick() - Exit\n");
+    // Now add the FroomKickPage as a layer
+    Section* section = SectionMgr::sInstance->curSection;
+    SectionMgr::sInstance->curSection->AddPageLayer(static_cast<PageId>(FroomKickPage::id));
 }
 
 void ExpFroom::OnResume() {
