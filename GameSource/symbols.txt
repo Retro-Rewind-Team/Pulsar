@@ -1932,7 +1932,7 @@ displayFcAndCountryHookExit__Fv = 0x807f0050
 displayFcAndCountryInResultFillNameHookExit__Fv = 0x807f5300
 displayFcAndCountryInResultFillTimeHookExit__Fv = 0x807f5968
 MD5Digest__FPCUcUiPUc = 0x800f0e08
-PicturePaneExists__15LayoutUIControlFPCc = 0x8063e328PicturePaneExists__15LayoutUIControlFPCc = 0x8063e328
+PicturePaneExists__15LayoutUIControlFPCc = 0x8063e328
 
 #VotePage
 __ct__Q25Pages4VoteFv = 0x80642f90
@@ -1944,8 +1944,6 @@ OnDispose__Q25Pages4VoteFv = 0x806433c8
 BeforeEntranceAnimations__Q25Pages4VoteFv = 0x806433cc
 BeforeExitAnimations__Q25Pages4VoteFv = 0x80643e98
 GetNextPage__Q25Pages4VoteCFv = 0x80643f18
-<<<<<<< Updated upstream
-=======
 
 atoi = 0x8001543c
 current__Q23EGG4Heap = 0x80386ea0
@@ -1957,4 +1955,3 @@ LowClosePartition__3DVDFPQ23DVD12CommandBlock = 0x801655a4
 ReadAbsAsyncPrio__3DVDFPQ23DVD8FileInfoPvUiUiPFiPQ23DVD8FileInfo_vi = 0x801628cc
 sInstance__Q25RKNet11ROOMHandler = 0x809c20e0
 SetToSendPacket__Q25RKNet11ROOMHandlerFUcQ25RKNet10ROOMPacket = 0x8065af74
->>>>>>> Stashed changes

@@ -28,6 +28,7 @@ public:
     UIControl* CreateExternalControl(u32 externControlId) override;
     UIControl* CreateControl(u32 controlId) override;
     void SetButtonHandlers(PushButton& button) override;
+    
 
 private:
     // PTMF Handlers for the "Kick" buttons and the "Back" press
@@ -37,10 +38,10 @@ private:
     void OnBackPress(u32 hudSlotId);
 
     // Helper to find which AID/Slot is associated with the clicked index
-    static u8 CalcAIDFromIdx(u8 idx);
+    u8 CalcAIDFromIdx(u8 idx);
 
     // Actually do the "kick"
-    static void KickPlayer(u8 aid);
+     void KickPlayer(u8 aid);
 
     // UI elements
     PushButton kickButtons[12];   // up to 12 potential players
@@ -50,6 +51,7 @@ private:
     u8 arrowMiiIdx[12];           // store (aid*2+player) or 0xFF if invalid
     Text::Info text;
     bool isLocked;
+
 };
 
 } // namespace UI

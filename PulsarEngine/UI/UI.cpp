@@ -81,6 +81,9 @@ void ExpSection::CreatePulPages() {
         case SECTION_P1_WIFI_FRIEND_TEAMVS:   //0x71
         case SECTION_P2_WIFI_FRIEND_VS:       //0x74
         case SECTION_P2_WIFI_FRIEND_TEAMVS:   //0x75
+
+            this->CreateAndInitPage(*this, FroomKickPage::id);
+
             if(system->IsContext(PULSAR_MODE_OTT)) {
                 this->CreateAndInitPage(*this, PAGE_TT_SPLITS);
                 Pages::RaceHUD::sInstance->nextPageId = PAGE_TT_SPLITS;
@@ -124,12 +127,6 @@ void ExpSection::CreatePulPages() {
         this->CreateAndInitPage(*this, PAGE_MESSAGEBOX);
         this->CreateAndInitPage(*this, PAGE_SELECT_STAGE_MGR);
     }
-    if(this->Get<ExpFroom>() != nullptr) {
-        this->CreateAndInitPage(*this, PULPAGE_TEAMSELECT);
-        this->CreateAndInitPage(*this, FroomKickPage::id); 
-        }
-        
-         //can also put it as part of the case froom of createandinitpage
 }
 
 void ExpSection::CreateAndInitPage(ExpSection& self, u32 id) {

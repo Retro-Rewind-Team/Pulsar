@@ -171,7 +171,7 @@ void ExpFroom::AfterControlUpdate() {
         this->teamsButton.isHidden = teamHidden;
         this->teamsButton.manipulator.inaccessible = teamHidden;
         this->kickPlayersButton.isHidden = false; // ADD THIS LINE
-        OS::Report("ExpFroom::AfterControlUpdate() - Teams button visibility updated, teamHidden: %d, kickPlayersButton visible\n");
+        OS::Report("ExpFroom::AfterControlUpdate() - Teams button visibility updated, teamHidden: %d, kickPlayersButton visible\n", teamHidden);
     }
     OS::Report("ExpFroom::AfterControlUpdate() - Exit\n");
 }

@@ -14,155 +14,183 @@ namespace Pulsar {
 namespace UI {
 
 FroomKickPage::FroomKickPage() {
-    OS::Report("FroomKickPage::FroomKickPage() - Entry\n");
-    this->hasBackButton = true;            // Provide a back button if desired
-    this->externControlCount = 0;
-    this->internControlCount = 25;
-    this->extraControlNumber = 0;
-    this->controlSources = 2;
-    this->titleBmg = BMG_TEXT; // or any BMG you want for “Kick Players Title”
-    this->nextPageId = PAGE_FRIEND_ROOM;   // or PAGE_FRIEND_ROOM_MESSAGES
-    this->prevPageId = PAGE_FRIEND_ROOM;   // or PAGE_FRIEND_ROOM_MESSAGES
-    this->nextSection = SECTION_NONE;
-    this->movieStartFrame = -1;
-    this->isLocked = false;
+    hasBackButton      = true;
+    externControlCount = 0;   // No “external” controls
+    internControlCount = 25;
+    extraControlNumber = 0;
+    controlCount = 0; // Ensure controlCount starts correctly
+    controlSources     = 2;   // Typically 2 means "local + net" or so
+    titleBmg           = BMG_TEXT;   // or any BMG you like
+    nextPageId         = PAGE_FRIEND_ROOM;
+    prevPageId         = PAGE_FRIEND_ROOM;
+    nextSection        = SECTION_NONE;
+    movieStartFrame    = -1;
+    isLocked           = false;
+    activePlayerBitfield = 1; // Typically 1 means “player 1 only,” etc.
 
-    // PTMF handlers
-    this->onButtonClickHandler.subject = this;
-    this->onButtonClickHandler.ptmf = &FroomKickPage::OnKickClick;
+    // If you want the “Start” or “Back” global handlers, set up manipulator manager
+    controlsManipulatorManager.Init(1, false);
+    SetManipulatorManager(controlsManipulatorManager);
 
-    this->onButtonSelectHandler.subject = this;
-    this->onButtonSelectHandler.ptmf = &FroomKickPage::OnKickSelect;
+    // e.g. set global Start/Back press if you want them
+    // controlsManipulatorManager.SetGlobalHandler(START_PRESS, onStartPressHandler, false, false);
+    controlsManipulatorManager.SetGlobalHandler(BACK_PRESS, onBackPressHandler, false, false);
 
-    this->onButtonDeselectHandler.subject = this;
-    this->onButtonDeselectHandler.ptmf = &FroomKickPage::OnKickDeselect;
+    // PTMF handler objects
+    onButtonClickHandler.subject    = this;
+    onButtonClickHandler.ptmf       = &FroomKickPage::OnKickClick;
 
-    this->onBackPressHandler.subject = this;
-    this->onBackPressHandler.ptmf = &FroomKickPage::OnBackPress;
-    OS::Report("FroomKickPage::FroomKickPage() - Exit\n");
+    onButtonSelectHandler.subject   = this;
+    onButtonSelectHandler.ptmf      = &FroomKickPage::OnKickSelect;
+
+    onButtonDeselectHandler.subject = this;
+    onButtonDeselectHandler.ptmf    = &FroomKickPage::OnKickDeselect;
+
+    onBackPressHandler.subject      = this;
+    onBackPressHandler.ptmf         = &FroomKickPage::OnBackPress;
+
+    // The array arrowMiiIdx is used to track who is at each button index
+    for (int i = 0; i < 12; i++) {
+        arrowMiiIdx[i] = 0xFF;
+    }
 }
 
 void FroomKickPage::OnInit() {
     OS::Report("FroomKickPage::OnInit() - Entry\n");
-    // We have 12 + 12 + 1 = 25 “internal” controls
-    this->InitControlGroup(this->internControlCount);
-    OS::Report("FroomKickPage::OnInit() - InitControlGroup done\n");
 
-    // Typically we get the MiiGroup from the FriendRoomManager:
-    Pages::FriendRoomManager *frm = SectionMgr::sInstance->curSection->Get<Pages::FriendRoomManager>();
-    OS::Report("FroomKickPage::OnInit() - Got FriendRoomManager: %p\n", frm);
-    if (frm != nullptr) {
-        this->miiGroup = &frm->miiGroup;
-        OS::Report("FroomKickPage::OnInit() - miiGroup set: %p\n", this->miiGroup);
-    } else {
-        // fallback in case it's not found
-        this->miiGroup = nullptr;
-        OS::Report("FroomKickPage::OnInit: FriendRoomManager not found!\n"); // Add error logging
-    }
-
-    for(int i = 0; i < 12; ++i) {
-        char variant[64];
-        snprintf(variant, 64, "KickBtn_%d", i);
-        this->kickButtons[i].Load(UI::buttonFolder, "PULiMemberConfirmButton", variant, 1, 0, true);
-        this->kickButtons[i].SetOnClickHandler(this->onButtonClickHandler, 0);
-        this->kickButtons[i].SetOnSelectHandler(this->onButtonSelectHandler);
-        this->kickButtons[i].SetOnDeselectHandler(this->onButtonDeselectHandler);
-
-        this->kickButtons[i].buttonId = i;
-        OS::Report("FroomKickPage::OnInit() - KickButton %d loaded\n", i);
-
-        ControlLoader loader(&this->miis[i]);
-        char miiVariant[64];
-        snprintf(miiVariant, 64, "Mii%d", i);
-        static const char* miiAnim[5] ={ "Translate", "TranslateRight", "TranslateLeft", nullptr, nullptr };
-        loader.Load("control", "TeamMii", miiVariant, miiAnim);
-        
-        OS::Report("FroomKickPage::OnInit() - Mii %d loaded\n", i);
-    }
-
-    ControlLoader nameLoader(&this->name);
-    nameLoader.Load("control", "TeamName", "TeamName", nullptr);
-    OS::Report("FroomKickPage::OnInit() - Name loader done\n");
-
-    // End with calling the parent's OnInit
+    // This sets up an internal array of size = internControlCount = 25
+    // and calls FroomKickPage::CreateControl(i) for each i in [0..24].
+    // this->InitControlGroup(internControlCount);  
     Pages::MenuInteractable::OnInit();
-    OS::Report("FroomKickPage::OnInit() - Pages::MenuInteractable::OnInit() done\n");
+
+    // Now do any additional post‐loading logic, e.g. MiiGroup
+    // Pages::FriendRoomManager *frm = SectionMgr::sInstance->curSection->Get<Pages::FriendRoomManager>();
+    // if (frm) {
+    //     this->miiGroup = &frm->miiGroup;
+    // } else {
+    //     this->miiGroup = nullptr;
+    // }
+
     OS::Report("FroomKickPage::OnInit() - Exit\n");
 }
 
 void FroomKickPage::BeforeEntranceAnimations() {
-    OS::Report("FroomKickPage::BeforeEntranceAnimations() - Entry\n");
     Pages::MenuInteractable::BeforeEntranceAnimations();
-    OS::Report("FroomKickPage::BeforeEntranceAnimations() - Pages::MenuInteractable::BeforeEntranceAnimations() done\n");
+    OS::Report("FroomKickPage::BeforeEntranceAnimations()\n");
+
     // Clear out any old animations or placeholders
     this->isLocked = false;
 
-    // Hide or reset all
-    for(int i = 0; i < 12; i++){
-        this->kickButtons[i].isHidden = true;
-        this->kickButtons[i].manipulator.inaccessible = true;
-        this->miis[i].isHidden = true;
-        OS::Report("FroomKickPage::BeforeEntranceAnimations() - Hiding button and mii %d\n", i);
+    // Hide everything to start
+    for (int i = 0; i < 12; i++) {
+        kickButtons[i].isHidden = true;
+        kickButtons[i].manipulator.inaccessible = true;
+        miis[i].isHidden = true;
     }
-    OS::Report("FroomKickPage::BeforeEntranceAnimations() - Exit\n");
 }
 
 void FroomKickPage::BeforeControlUpdate() {
     OS::Report("FroomKickPage::BeforeControlUpdate() - Entry\n");
-    // Now show each valid occupant
+
+    Pages::FriendRoomManager *frmPtr = static_cast<Pages::FriendRoomManager*>(SectionMgr::sInstance->curSection->Get<Pages::FriendRoomManager>());
+
+
+    // Fetch the RKNet::Controller instance
     RKNet::Controller* controller = RKNet::Controller::sInstance;
-    OS::Report("FroomKickPage::BeforeControlUpdate() - Got RKNet::Controller: %p\n", controller);
+    OS::Report("FroomKickPage::BeforeControlUpdate() - RKNet::Controller instance: %p\n", controller);
+
+    // Update miiGroup each time to ensure it's current
+    
+
     if (!controller) {
         OS::Report("FroomKickPage::BeforeControlUpdate() - Controller is NULL, exiting early!\n");
         return;
     }
+
+    // Validate currentSub index
+    if (controller->currentSub >= 2) { // i think because its either 0 or 1
+        OS::Report("FroomKickPage::BeforeControlUpdate() - Invalid currentSub index: %d (MAX_SUBS: %d)\n", controller->currentSub, 2);
+        return;
+    }
+
     RKNet::ControllerSub& sub = controller->subs[controller->currentSub];
-    OS::Report("FroomKickPage::BeforeControlUpdate() - Got RKNet::ControllerSub, currentSub: %d, localAid: %d, hostAid: %d, availableAids: %x\n", controller->currentSub, sub.localAid, sub.hostAid, sub.availableAids);
+    OS::Report("FroomKickPage::BeforeControlUpdate() - ControllerSub details: currentSub=%d, localAid=%d, hostAid=%d, availableAids=0x%X\n",
+              controller->currentSub, sub.localAid, sub.hostAid, sub.availableAids);
 
+    // Check if connectionUserDatas is valid
+    if (!sub.connectionUserDatas) {
+        OS::Report("FroomKickPage::BeforeControlUpdate() - connectionUserDatas is NULL!\n");
+        return;
+    }
 
-    // fill from availableAids
+    // Iterate over all possible AIDs
     int idx = 0;
-    for (int aid = 0; aid < 12; ++aid) {
+    for (int aid = 0; aid < 12; aid++) {
+        OS::Report("FroomKickPage::BeforeControlUpdate() - Checking AID %d\n", aid);
         if (sub.availableAids & (1 << aid)) {
-            u8 localCount = sub.connectionUserDatas[aid].playersAtConsole;
-            OS::Report("FroomKickPage::BeforeControlUpdate() - AID %d is available, localCount: %d\n", aid, localCount);
-            for(int player=0; player < localCount; ++player) {
-                // fill the Mii
+            OS::Report("FroomKickPage::BeforeControlUpdate() - AID %d is available\n", aid);
+
+            // Validate aid index
+            if (aid >= 12) { // Define MAX_AIDS appropriately (typically 12)
+                OS::Report("FroomKickPage::BeforeControlUpdate() - AID %d is out of bounds (MAX_AIDS: %d)\n", aid, 12);
+                continue;
+            }
+
+            // Fetch playersAtConsole
+            u8 playersAtConsole = sub.connectionUserDatas[aid].playersAtConsole;
+            OS::Report("FroomKickPage::BeforeControlUpdate() - AID %d has %d players at console\n", aid, playersAtConsole);
+
+            // Validate playersAtConsole
+            if (playersAtConsole > 2) { // Define MAX_PLAYERS_PER_AID appropriately
+                OS::Report("FroomKickPage::BeforeControlUpdate() - AID %d has invalid playersAtConsole: %d (MAX_PLAYERS_PER_AID: %d)\n",
+                          aid, playersAtConsole, 2);
+                playersAtConsole = 2; // Clamp to maximum
+            }
+
+            for(int player = 0; player < playersAtConsole; player++) {
+                OS::Report("FroomKickPage::BeforeControlUpdate() - Processing player %d for AID %d (idx=%d)\n", player, aid, idx);
                 if (idx < 12) {
-                    OS::Report("FroomKickPage::BeforeControlUpdate() - Processing player index: %d for AID: %d, player: %d\n", idx, aid, player);
-                    this->miis[idx].isHidden = false;
-                    OS::Report("FroomKickPage::BeforeControlUpdate() - Mii %d visibility set to false\n", idx);
-                    if(miiGroup) {
-                        OS::Report("FroomKickPage::BeforeControlUpdate() - miiGroup is valid, setting MiiPane for index: %d, aid: %d, player: %d\n", idx, aid, player);
-                        this->miis[idx].SetMiiPane("chara", *miiGroup, aid*2 + player, 2);
-                        this->miis[idx].SetMiiPane("chara_shadow", *miiGroup, aid*2 + player, 2);
-                        OS::Report("FroomKickPage::BeforeControlUpdate() - MiiPane set for index: %d\n", idx);
+                    // Show Mii
+                    miis[idx].isHidden = false;
+                    OS::Report("FroomKickPage::BeforeControlUpdate() - miis[%d].isHidden set to false\n", idx);
+
+                    // Validate miiGroup
+                    if (miiGroup) {
+                        OS::Report("FroomKickPage::BeforeControlUpdate() - miiGroup is valid\n");
+
+                        // Validate arrowMiiIdx array
+                        if (idx >= sizeof(arrowMiiIdx)/sizeof(arrowMiiIdx[0])) {
+                            OS::Report("FroomKickPage::BeforeControlUpdate() - idx %d is out of bounds for arrowMiiIdx array\n", idx);
+                        } else {
+                            // Validate aid*2 + player
+                            u32 miiIdx = aid * 2 + player;
+                            if (miiIdx >= miiGroup->miiCount) { // Assuming GetMiiCount() exists
+                                OS::Report("FroomKickPage::BeforeControlUpdate() - miiIdx %d is out of range for miiGroup (MiiCount: %d)\n", miiIdx, miiGroup->miiCount);
+                            } else {
+                                miis[idx].SetMiiPane("chara",        *miiGroup, miiIdx, 2);
+                                miis[idx].SetMiiPane("chara_shadow", *miiGroup, miiIdx, 2);
+                                OS::Report("FroomKickPage::BeforeControlUpdate() - Set MiiPane for miis[%d] with miiIdx=%d\n", idx, miiIdx);
+                            }
+                            arrowMiiIdx[idx] = miiIdx;
+                            OS::Report("FroomKickPage::BeforeControlUpdate() - arrowMiiIdx[%d] set to %d\n", idx, arrowMiiIdx[idx]);
+                        }
                     } else {
-                        OS::Report("FroomKickPage::BeforeControlUpdate() - miiGroup is NULL, skipping MiiPane setting for index: %d\n", idx);
-                    }
-                    this->arrowMiiIdx[idx] = aid*2 + player;
-                    OS::Report("FroomKickPage::BeforeControlUpdate() - arrowMiiIdx[%d] set to %d\n", idx, this->arrowMiiIdx[idx]);
-
-                    // Kick button
-                    this->kickButtons[idx].isHidden = false;
-                    this->kickButtons[idx].manipulator.inaccessible = false;
-                    OS::Report("FroomKickPage::BeforeControlUpdate() - KickButton %d visibility and accessibility set\n", idx);
-
-                    // If aid == sub.hostAid, or if local (like you are trying to kick yourself), disable the button
-                    if(aid == sub.hostAid) {
-                        this->kickButtons[idx].manipulator.inaccessible = true; // can't kick the host
-                        OS::Report("FroomKickPage::BeforeControlUpdate() - KickButton %d made inaccessible because AID is host\n", idx);
+                        OS::Report("FroomKickPage::BeforeControlUpdate() - miiGroup is NULL, skipping SetMiiPane\n");
                     }
 
-                    // Additional check if it is your own local console
-                    if(aid == sub.localAid) {
-                        // e.g. if that occupant is YOU or your local guest
-                        this->kickButtons[idx].manipulator.inaccessible = true;
-                        OS::Report("FroomKickPage::BeforeControlUpdate() - KickButton %d made inaccessible because AID is local\n", idx);
+                    // Show Kick Button
+                    kickButtons[idx].isHidden = false;
+                    kickButtons[idx].manipulator.inaccessible = false;
+                    OS::Report("FroomKickPage::BeforeControlUpdate() - kickButtons[%d].isHidden set to false and accessible\n", idx);
+
+                    // Don’t let host or local AIDs kick themselves
+                    if (aid == sub.hostAid || aid == sub.localAid) {
+                        kickButtons[idx].manipulator.inaccessible = true;
+                        OS::Report("FroomKickPage::BeforeControlUpdate() - kickButtons[%d] made inaccessible (aid=%d is host or local)\n", idx, aid);
                     }
                     idx++;
                 } else {
-                    OS::Report("FroomKickPage::BeforeControlUpdate() - Index %d >= 12, breaking inner loop\n", idx);
+                    OS::Report("FroomKickPage::BeforeControlUpdate() - idx %d >= 12, breaking inner loop\n", idx);
                     break; // Prevent out-of-bounds access
                 }
             }
@@ -170,8 +198,19 @@ void FroomKickPage::BeforeControlUpdate() {
             OS::Report("FroomKickPage::BeforeControlUpdate() - AID %d is NOT available\n", aid);
         }
     }
+
+    // Hide the leftover slots
+    OS::Report("FroomKickPage::BeforeControlUpdate() - Hiding leftover slots from idx=%d to 12\n", idx);
+    for (int leftover = idx; leftover < 12; leftover++) {
+        kickButtons[leftover].isHidden = true;
+        kickButtons[leftover].manipulator.inaccessible = true;
+        miis[leftover].isHidden = true;
+        OS::Report("FroomKickPage::BeforeControlUpdate() - kickButtons[%d].isHidden=true, manipulator.inaccessible=true; miis[%d].isHidden=true\n", leftover, leftover);
+    }
+
     OS::Report("FroomKickPage::BeforeControlUpdate() - Exit\n");
 }
+
 
 int FroomKickPage::GetActivePlayerBitfield() const {
     OS::Report("FroomKickPage::GetActivePlayerBitfield() - Entry/Exit\n");
@@ -194,21 +233,63 @@ UIControl* FroomKickPage::CreateExternalControl(u32 externControlId) {
 }
 
 UIControl* FroomKickPage::CreateControl(u32 controlId) {
-    OS::Report("FroomKickPage::CreateControl() - Entry, controlId: %d\n", controlId);
-    UIControl* control = nullptr;
-    if(controlId < 12) {
-        control = &this->kickButtons[controlId];
-        OS::Report("FroomKickPage::CreateControl() - Returning kickButtons[%d]\n", controlId);
-    } else if(controlId < 24) {
-        control = &this->miis[controlId - 12];
-        OS::Report("FroomKickPage::CreateControl() - Returning miis[%d]\n", controlId - 12);
-    } else if(controlId == 24) {
-        control = &this->name;
-        OS::Report("FroomKickPage::CreateControl() - Returning name\n");
+    u32 idx = this->controlCount;
+    this->controlCount++;
+
+    // 0..11 => Kick Buttons
+    if (controlId < 12)
+    {
+        AddControl(idx, kickButtons[controlId], /*zIndex=*/0);
+
+        // // Construct variant name e.g. KickBtn_0, KickBtn_1, etc.
+        char variant[64];
+        snprintf(variant, 64, "KickBtn_%d", controlId);
+
+        // (Optional) Actually load the button from your BRCTR or "template" SZS
+        // or if you want to do it purely in code:
+        //   loader.Load("button", "SomeKickButton", variant, animGroups);
+        //
+        // But if you prefer direct:
+        kickButtons[controlId].Load(UI::buttonFolder, "PULiMemberConfirmButton", variant, 1, 0, false);
+        kickButtons[controlId].buttonId = controlId;
+
+        // Hook up PTMF
+        kickButtons[controlId].SetOnClickHandler(onButtonClickHandler, 0);
+        kickButtons[controlId].SetOnSelectHandler(onButtonSelectHandler);
+        kickButtons[controlId].SetOnDeselectHandler(onButtonDeselectHandler);
+
+        return &kickButtons[controlId];
     }
-    OS::Report("FroomKickPage::CreateControl() - Exit\n");
-    return control;
+    // 12..23 => Mii Controls
+    else if (controlId < 24)
+    {
+        u32 miiIdx = controlId - 12;
+        AddControl(idx, miis[miiIdx], 0);
+
+        // If you have a BRCTR for the Mii layout, do e.g.:
+        ControlLoader loader(&miis[miiIdx]);
+        char variant[64];
+        snprintf(variant, 64, "Mii%d", miiIdx);
+        static const char* miiAnim[5] = { "Translate", "TranslateRight", "TranslateLeft", nullptr, nullptr };
+        loader.Load("control", "TeamMii", variant, miiAnim);
+
+        return &miis[miiIdx];
+    }
+    // 24 => MiiName text box
+    else if (controlId == 24)
+    {
+        AddControl(idx, name, 0);
+
+        // Possibly load "TeamName"
+        ControlLoader loader(&name);
+        loader.Load("control", "TeamName", "TeamName", nullptr);
+
+        return &name;
+    }
+    // fallback
+    return nullptr;
 }
+
 
 void FroomKickPage::SetButtonHandlers(PushButton& button) {
     OS::Report("FroomKickPage::SetButtonHandlers() - Entry, buttonId: %d, Exit (doing nothing)\n", button.buttonId);
@@ -248,9 +329,9 @@ void FroomKickPage::OnKickDeselect(PushButton& button, u32 hudSlotId){
 }
 
 void FroomKickPage::OnBackPress(u32 hudSlotId) {
-    OS::Report("FroomKickPage::OnBackPress() - Entry, hudSlotId: %d\n", hudSlotId);
-    this->EndStateAnimated(0.0f, 1);
-    OS::Report("FroomKickPage::OnBackPress() - Exit\n");
+    OS::Report("FroomKickPage::OnBackPress() => hudSlotId=%d\n", hudSlotId);
+    // Correct: Passing u32 as expected
+    this->EndStateAnimated(0, 1.0f); 
 }
 
 // Called from OnKickClick:

@@ -1,0 +1,1129 @@
+ExpFroomPage.cpp
+#include <MarioKartWii/UI/Page/Other/Globe.hpp>
+#include <MarioKartWii/3D/GlobeMgr.hpp>
+#include <PulsarSystem.hpp>
+#include <Settings/UI/ExpFroomPage.hpp>
+#include <UI/FroomKickPage.hpp>
+#include <UI/TeamSelect/TeamSelect.hpp>
+#include <UI/UI.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+kmWrite32(0x805d8260, 0x60000000); //nop initcontrolgroup
+void ExpFroom::OnInit() {
+    OS::Report("ExpFroom::OnInit() - Entry\n");
+
+    this->InitControlGroup(8); //5 usually + settings button + teams button
+    OS::Report("ExpFroom::OnInit() - InitControlGroup(8) called\n");
+    FriendRoom::OnInit();
+    OS::Report("ExpFroom::OnInit() - FriendRoom::OnInit() called\n");
+
+    this->AddControl(5, settingsButton, 0);
+    this->settingsButton.Load(UI::buttonFolder, "FroomButton", "Settings", 1, 0, false);
+    this->settingsButton.buttonId = 5;
+    this->settingsButton.SetOnClickHandler(this->onSettingsClickHandler, 0);
+    this->settingsButton.SetOnSelectHandler(this->onButtonSelectHandler);
+    this->topSettingsPage = SettingsPanel::id;
+    OS::Report("ExpFroom::OnInit() - Settings button added\n");
+
+    this->AddControl(6, teamsButton, 0);
+    this->teamsButton.Load(UI::buttonFolder, "FroomButton", "Teams", 1, 0, false);
+    this->teamsButton.buttonId = 6;
+    this->teamsButton.SetOnClickHandler(this->onTeamsClickHandler, 0);
+    this->teamsButton.SetOnSelectHandler(this->onButtonSelectHandler);
+    OS::Report("ExpFroom::OnInit() - Teams button added\n");
+
+    RKNet::ControllerSub& sub = RKNet::Controller::sInstance->subs[RKNet::Controller::sInstance->currentSub];
+    bool isHost = (sub.localAid == sub.hostAid);
+    OS::Report("ExpFroom::OnInit() - isHost: %d, localAid: %d, hostAid: %d\n", isHost, sub.localAid, sub.hostAid);
+
+    this->AddControl(7, kickPlayersButton, 0); // Add the button with ID 7
+    this->kickPlayersButton.Load(UI::buttonFolder, "PULiMemberConfirmButton", "KickPlayers", 1, 0, false);
+    this->kickPlayersButton.buttonId = 7; // Set buttonId to 7
+    this->kickPlayersButton.SetOnClickHandler(this->onKickPlayersClickHandler, 0);
+    this->kickPlayersButton.SetOnSelectHandler(this->onButtonSelectHandler);
+    this->kickPlayersButton.isHidden = false;
+    this->kickPlayersButton.manipulator.inaccessible = !isHost;
+    OS::Report("ExpFroom::OnInit() - Kick Players button added, inaccessible: %d\n", this->kickPlayersButton.manipulator.inaccessible);
+
+    OS::Report("ExpFroom::OnInit() - Exit\n");
+}
+
+void ExpFroom::OnKickPlayersButtonClick(PushButton& button, u32 hudSlotId) {
+    OS::Report("ExpFroom::OnKickPlayersButtonClick() - Entry\n");
+
+    // Check if you are the host:
+    RKNet::Controller* controller = RKNet::Controller::sInstance;
+    if (!controller) {
+        OS::Report("ExpFroom::OnKickPlayersButtonClick() - ERROR: controller is NULL\n");
+        return;
+    }
+    OS::Report("ExpFroom::OnKickPlayersButtonClick() - controller is valid: %p\n", controller);
+
+    RKNet::ControllerSub& sub = controller->subs[controller->currentSub]; // Get ControllerSub
+    OS::Report("ExpFroom::OnKickPlayersButtonClick() - isHost: %d, localAid: %d, hostAid: %d\n", (sub.localAid == sub.hostAid), sub.localAid, sub.hostAid);
+
+    if(sub.localAid == sub.hostAid) {
+        OS::Report("ExpFroom::OnKickPlayersButtonClick() - User is host, proceeding to add KickPage\n");
+
+        // Before calling EndStateAnimated
+        OS::Report("ExpFroom::OnKickPlayersButtonClick() - Calling EndStateAnimated\n");
+        this->EndStateAnimated(0, button.GetAnimationFrameSize());
+        OS::Report("ExpFroom::OnKickPlayersButtonClick() - EndStateAnimated called successfully\n");
+
+        // Before calling AddPageLayer
+        OS::Report("ExpFroom::OnKickPlayersButtonClick() - Calling AddPageLayer with PageId: %d\n", FroomKickPage::id);
+        if (!SectionMgr::sInstance || !SectionMgr::sInstance->curSection) {
+            OS::Report("ExpFroom::OnKickPlayersButtonClick() - ERROR: SectionMgr::sInstance or curSection is NULL\n");
+            return;
+        }
+        SectionMgr::sInstance->curSection->AddPageLayer(static_cast<PageId>(FroomKickPage::id));
+        OS::Report("ExpFroom::OnKickPlayersButtonClick() - AddPageLayer(FroomKickPage::id) called\n");
+    } else {
+        OS::Report("ExpFroom::OnKickPlayersButtonClick() - User is not host, skipping AddPageLayer\n");
+    }
+    OS::Report("ExpFroom::OnKickPlayersButtonClick() - Exit\n");
+}
+
+void ExpFroom::OnResume() {
+    OS::Report("ExpFroom::OnResume() - Entry, areControlsHidden: %d\n", this->areControlsHidden);
+    if(this->areControlsHidden) GlobeMgr::sInstance->DisplayMii();
+    this->areControlsHidden = false;
+    FriendRoom::OnResume();
+    OS::Report("ExpFroom::OnResume() - Exit\n");
+}
+
+void ExpFroom::ExtOnButtonSelect(PushButton& button, u32 hudSlotId) {
+    OS::Report("ExpFroom::ExtOnButtonSelect() - Entry, buttonId: %d\n", button.buttonId);
+    if(button.buttonId == 5) {
+        u32 bmgId = BMG_SETTINGS_BOTTOM + 1;
+        if(this->topSettingsPage == PAGE_VS_TEAMS_VIEW) bmgId += 1;
+        else if(this->topSettingsPage == PAGE_BATTLE_MODE_SELECT) bmgId += 2;
+        this->bottomText.SetMessage(bmgId, 0);
+        OS::Report("ExpFroom::ExtOnButtonSelect() - Settings button selected, bmgId: %d\n", bmgId);
+    }
+    else if(button.buttonId == 6) {
+        this->bottomText.SetMessage(BMG_TEAMS_BOTTOM, 0);
+        OS::Report("ExpFroom::ExtOnButtonSelect() - Teams button selected\n");
+    }
+    else {
+        this->OnButtonSelect(button, hudSlotId);
+        OS::Report("ExpFroom::ExtOnButtonSelect() - OnButtonSelect called for buttonId: %d\n", button.buttonId);
+    }
+    OS::Report("ExpFroom::ExtOnButtonSelect() - Exit\n");
+}
+
+void ExpFroom::OnSettingsButtonClick(PushButton& button, u32 hudSlotId) {
+    OS::Report("ExpFroom::OnSettingsButtonClick() - Entry\n");
+    this->areControlsHidden = true;
+    ExpSection::GetSection()->GetPulPage<SettingsPanel>()->prevPageId = PAGE_FRIEND_ROOM;
+    this->AddPageLayer(static_cast<PageId>(this->topSettingsPage), 0);
+    OS::Report("ExpFroom::OnSettingsButtonClick() - AddPageLayer(topSettingsPage) called, topSettingsPage: %d\n", this->topSettingsPage);
+    OS::Report("ExpFroom::OnSettingsButtonClick() - Exit\n");
+}
+
+void ExpFroom::OnTeamsButtonClick(PushButton& button, u32 hudSlotId) {
+    OS::Report("ExpFroom::OnTeamsButtonClick() - Entry\n");
+    this->areControlsHidden = true;
+    this->AddPageLayer(static_cast<PageId>(PULPAGE_TEAMSELECT), 0);
+    OS::Report("ExpFroom::OnTeamsButtonClick() - AddPageLayer(PULPAGE_TEAMSELECT) called\n");
+    OS::Report("ExpFroom::OnTeamsButtonClick() - Exit\n");
+}
+
+void ExpFroom::AfterControlUpdate() {
+    OS::Report("ExpFroom::AfterControlUpdate() - Entry, areControlsHidden: %d\n", this->areControlsHidden);
+    FriendRoom::AfterControlUpdate();
+    OS::Report("ExpFroom::AfterControlUpdate() - FriendRoom::AfterControlUpdate() called\n");
+    const Section* section = SectionMgr::sInstance->curSection;
+    Pages::Globe* globe = section->Get<Pages::Globe>();
+    Pages::FriendRoomWaiting* waiting = section->Get<Pages::FriendRoomWaiting>();
+    Pages::FriendRoomManager* mgr = section->Get<Pages::FriendRoomManager>();
+    OS::Report("ExpFroom::AfterControlUpdate() - Got section pages\n");
+
+    const bool hidden = this->areControlsHidden;
+    this->messagesButton.isHidden = hidden;
+    this->backButton.isHidden = hidden;
+    this->bottomText.isHidden = hidden;
+    this->settingsButton.isHidden = hidden;
+    this->teamsButton.isHidden = hidden;
+    globe->message.isHidden = hidden;
+    globe->miiName.isHidden = hidden;
+    for(FriendMatchingPlayer* player = &mgr->miiIcons[0]; player < &mgr->miiIcons[24]; player++) player->isHidden = hidden;
+    mgr->titleText.isHidden = hidden;
+    OS::Report("ExpFroom::AfterControlUpdate() - Basic controls visibility updated, hidden: %d\n", hidden);
+
+    if(hidden) { //these get updated by the game too, so only need to update their isHidden when they should be forced hidden
+        this->startButton.isHidden = hidden;
+        this->addFriendsButton.isHidden = hidden;
+        waiting->messageWindow.isHidden = hidden;
+        mgr->busySymbol.isHidden = hidden;
+        GlobeMgr* globeMgr = GlobeMgr::sInstance;
+        globeMgr->earthmodel->isMiiShown = false;
+        globeMgr->ResetGlobeMii();
+        OS::Report("ExpFroom::AfterControlUpdate() - Hidden controls updated and GlobeMii reset\n");
+
+    }
+    else { //if controls are enabled, teamsButton is only visible for hosts when >2players in room
+        const RKNet::Controller* controller = RKNet::Controller::sInstance;
+        const RKNet::ControllerSub& sub = controller->subs[controller->currentSub];
+        bool teamHidden = true;
+        if(sub.hostAid == sub.localAid && sub.playerCount >= 2) teamHidden = false;
+        this->teamsButton.isHidden = teamHidden;
+        this->teamsButton.manipulator.inaccessible = teamHidden;
+        this->kickPlayersButton.isHidden = false; // ADD THIS LINE
+        OS::Report("ExpFroom::AfterControlUpdate() - Teams button visibility updated, teamHidden: %d, kickPlayersButton visible\n", teamHidden);
+    }
+    OS::Report("ExpFroom::AfterControlUpdate() - Exit\n");
+}
+
+void ExpFroom::OnMessageBoxClick(Pages::MessageBoxTransparent* msgBoxPage) {
+    OS::Report("ExpFroom::OnMessageBoxClick() - Entry\n");
+    Section* section = SectionMgr::sInstance->curSection;
+    section->activePages[section->layerCount - 1] = msgBoxPage;
+    section->layerCount--;
+    OS::Report("ExpFroom::OnMessageBoxClick() - Exit, layerCount decremented\n");
+}
+
+void FixLayerCountOnMsgBoxClick(Pages::MessageBoxTransparent* msgBoxPage) {
+    OS::Report("FixLayerCountOnMsgBoxClick() - Entry\n");
+    Section* section = SectionMgr::sInstance->curSection;
+    if(section->layerCount == 9) {
+        section->activePages[section->layerCount] = nullptr;
+        section->layerCount--;
+        OS::Report("FixLayerCountOnMsgBoxClick() - Layer count was 9, decremented\n");
+    }
+    msgBoxPage->Reset();
+    OS::Report("FixLayerCountOnMsgBoxClick() - msgBoxPage->Reset() called, Exit\n");
+}
+kmCall(0x805d860c, FixLayerCountOnMsgBoxClick);
+
+}//namespace UI
+}//namespace Pulsar
+
+ExpFroomPage.hpp
+#ifndef _PUL_FROOMPAGE_
+#define _PUL_FROOMPAGE_
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Page/Other/FriendRoom.hpp>
+#include <MarioKartWii/UI/Page/Other/Message.hpp>
+#include <MarioKartWii/RKNet/RKNetController.hpp>
+#include <Settings/UI/SettingsPanel.hpp>
+
+/*Extends FriendRoom to add a settings and a change teams button; contrary to the other two pages where the settings are present,
+here they are added as a layer. That is because the FriendRoom still needs to run in the background as it is what checks when players join/leave,
+when the host starts a gamemode etc...
+Consequently, most controls present on the FriendRoom (whether its own or other Pages') are hidden when these buttons are pressed
+to prevent ugly Z-fighting
+*/
+namespace Pulsar {
+namespace UI {
+class ExpFroom : public Pages::FriendRoom {
+public:
+    ExpFroom() : areControlsHidden(false) {
+        this->onSettingsClickHandler.subject = this;
+        this->onSettingsClickHandler.ptmf = &ExpFroom::OnSettingsButtonClick;
+        this->onTeamsClickHandler.subject = this;
+        this->onTeamsClickHandler.ptmf = &ExpFroom::OnTeamsButtonClick;
+        this->onButtonSelectHandler.ptmf = &ExpFroom::ExtOnButtonSelect;
+        this->onKickPlayersClickHandler.subject = this;
+        this->onKickPlayersClickHandler.ptmf = &ExpFroom::OnKickPlayersButtonClick;
+    }
+    PushButton kickPlayersButton;
+    void OnInit() override;
+    void AfterControlUpdate() override;
+    void OnResume() override;
+    void OnMessageBoxClick(Pages::MessageBoxTransparent* msgPage);
+
+private:
+    void ExtOnButtonSelect(PushButton& button, u32 hudSlotId);
+    void OnSettingsButtonClick(PushButton& button, u32 hudSlotId);
+    void OnTeamsButtonClick(PushButton& button, u32 hudSlotId);
+    PtmfHolder_2A<ExpFroom, void, PushButton&, u32> onSettingsClickHandler;
+    PtmfHolder_2A<ExpFroom, void, PushButton&, u32> onTeamsClickHandler;
+    PtmfHolder_2A<ExpFroom, void, PushButton&, u32> onKickPlayersClickHandler; // in the class
+    void ExpFroom::OnKickPlayersButtonClick(PushButton& button, u32 hudSlotId);
+    PushButton settingsButton;
+    PushButton teamsButton;
+    bool areControlsHidden;
+public:
+    PulPageId topSettingsPage;
+};
+}//namespace UI
+}//namespace Pulsar
+#endif
+
+ExpOptionsPage.cpp
+#include <UI/UI.hpp>
+#include <Settings/UI/ExpOptionsPage.hpp>
+#include <Settings/UI/SettingsPanel.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+kmWrite32(0x805fd754, 0x60000000); //nop the InitControl call in the init func
+
+ExpOptions::ExpOptions() { this->onButtonClickHandler.ptmf = &ExpOptions::ExpandedOnButtonClick; }
+
+void ExpOptions::OnInit() {
+    this->InitControlGroup(5 + 1);
+    Options::OnInit();
+    this->AddControl(this->controlGroup.controlCount - 1, settingsButton, 0);
+
+    this->settingsButton.Load(UI::buttonFolder, "SettingsButton", "Settings", 1, 0, false);
+
+    this->settingsButton.buttonId = 5;
+    this->settingsButton.SetOnClickHandler(this->onButtonClickHandler, 0);
+    this->settingsButton.SelectInitial(0);
+}
+
+void ExpOptions::ExpandedOnButtonClick(PushButton& pushButton, u32 hudSlotId) {
+    if(pushButton.buttonId == 5) {
+        this->nextPageId = static_cast<PageId>(SettingsPanel::id);
+        this->EndStateAnimated(0, pushButton.GetAnimationFrameSize());
+    }
+    else {
+        this->OnButtonClick(pushButton, hudSlotId);
+    }
+}
+
+static void PatchOptionsBRCTR(PushButton* button, const char* folderName, const char* ctrName, const char* variant, u32 playerCount, u32 r8, bool inaccessible) {
+    button->Load(folderName, "SettingsButton", variant, playerCount, r8, inaccessible);
+}
+kmCall(0x805fd7bc, PatchOptionsBRCTR); //so that the positions are correct
+kmCall(0x805fd80c, PatchOptionsBRCTR);
+kmCall(0x805fd858, PatchOptionsBRCTR);
+}//namespace UI
+}//namespace Pulsar
+
+ExpOptionsPage.hpp
+#ifndef _PUL_OPTIONS_
+#define _PUL_OPTIONS_
+#include <kamek.hpp>
+#include <UI/UI.hpp>
+#include <MarioKartWii/UI/Page/Other/Options.hpp>
+
+//Extends Options to add a settings button
+namespace Pulsar {
+namespace UI {
+class ExpOptions : public Pages::Options {
+public:
+    ExpOptions();
+    void OnInit() override;
+private:
+    void ExpandedOnButtonClick(PushButton& pushButton, u32 hudSlotId);
+    PushButton settingsButton;
+};
+}//namespace UI
+}//namespace Pulsar
+#endif
+
+ExpSinglePlayer.cpp
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Page/Menu/SinglePlayer.hpp>
+#include <MarioKartWii/Item/ItemManager.hpp>
+#include <PulsarSystem.hpp>
+#include <UI/UI.hpp>
+#include <Settings/UI/SettingsPanel.hpp>
+//Implements 4 TT modes by splitting the "Time Trials" button
+
+
+namespace Pulsar {
+static void SetCC();
+namespace UI {
+
+
+
+void CorrectButtonCount(Pages::SinglePlayer* page) {
+    const System* system = System::sInstance;
+    const bool hasFeather = system->GetInfo().HasFeather();
+    const bool has200cc = system->GetInfo().Has200cc();
+    page->externControlCount = 4 + hasFeather + has200cc + (hasFeather && has200cc) + 1;
+    new (page) Page;
+}
+kmCall(0x806266b8, CorrectButtonCount);
+kmWrite32(0x806266d4, 0x60000000);
+
+UIControl* CreateExternalControls(Pages::SinglePlayer* page, u32 id) {
+    if(id == page->externControlCount - 1) {
+        PushButton* button = new(PushButton);
+        page->AddControl(page->controlCount++, *button, 0);
+        const char* name =  "Settings1P";
+        button->Load(UI::buttonFolder, name, name, page->activePlayerBitfield, 0, false);
+        return button;
+    }
+    return page->Pages::SinglePlayer::CreateExternalControl(id);
+
+}
+kmWritePointer(0x808D9F84, CreateExternalControls);
+
+//kmWrite32(0x8084f080, 0x7F89E378); //get idx in r9
+static void LoadCorrectBRCTR(PushButton& button, const char* folder, const char* ctr, const char* variant, u32 localPlayerField) {
+    register int idx;
+    asm(mr idx, r28;);
+    Pages::SinglePlayer* page = button.parentGroup->GetParentPage<Pages::SinglePlayer>();
+    const System* system = System::sInstance;
+
+    u32 varId = 0;
+    u32 count = page->externControlCount;
+    if(count > 5 && (idx == 1 || idx > 3)) {
+        switch(count) {
+            case(6):
+                ctr = "PulTTTwo";
+                if(idx != 1) {
+                    if(system->GetInfo().Has200cc()) varId = 1;
+                    else varId = 2;
+                }
+                break;
+            case(8):
+                ctr = "PulTTFour";
+                if(idx != 1) varId = idx - 3;
+                break;
+        }
+        char ttVariant[0x15];
+        snprintf(ttVariant, 0x15, "%s_%d", ctr, varId);
+        variant = ttVariant;
+
+    }
+
+    button.Load(folder, ctr, variant, localPlayerField, 0, false);
+    page->curMovieCount = 0;
+}
+kmCall(0x8084f084, LoadCorrectBRCTR);
+
+
+//kmWrite32(0x8084f08c, 0x60000000);
+//kmWrite32(0x8084f094, 0x38030001);
+//kmWrite32(0x8084f098, 0x60000000);
+
+//Hacky custom CalcDistance so that the navigating the single player menu is intuitive
+static int FixCalcDistance(const ControlManipulator& subject, const ControlManipulator& other, Directions direction) {
+    const s32 subId = static_cast<PushButton*>(subject.actionHandlers[0]->subject)->buttonId;
+    const s32 destId = static_cast<PushButton*>(other.actionHandlers[0]->subject)->buttonId;
+    switch(subId) {
+        case(0):
+            if(direction == DIRECTION_DOWN && destId == 1) return 1;
+            break;
+        case(2):
+            if(direction == DIRECTION_UP && destId == 1) return 1;
+            break;
+        case(1):
+        case(4):
+        case(5):
+        case(6):
+            if(direction == DIRECTION_UP && destId == 0 || direction == DIRECTION_DOWN && destId == 2) return 1;
+    }
+    return subject.CalcDistanceBothWrapping(other, direction);
+}
+
+static void SetDistanceFunc(ControlsManipulatorManager& mgr) {
+    mgr.distanceFunc = &FixCalcDistance;
+}
+kmCall(0x8084ef68, SetDistanceFunc);
+
+
+void OnButtonSelect(Pages::SinglePlayer* page, PushButton& button, u32 hudSlotId) {
+    const s32 id = button.buttonId;
+    u32 count = page->externControlCount;
+    if(count > 5 && (id == 1 || id > 3)) {
+
+        u32 bmgId;
+        if(id == count - 1) bmgId = BMG_SETTINGSBUTTON_BOTTOM;
+        else {
+            button.buttonId = 1;
+            page->Pages::SinglePlayer::OnExternalButtonSelect(button, hudSlotId);
+            button.buttonId = id;
+            bmgId = BMG_TT_MODE_BOTTOM_SINGLE;
+            const System* system = System::sInstance;
+            switch(page->externControlCount) {
+                case(6):
+                    if(id > 3) {
+                        if(system->GetInfo().Has200cc()) bmgId += 1;
+                        else bmgId += 2;
+                    }
+                    break;
+                case(8):
+                    if(id > 3) bmgId = bmgId + id - 3;
+                    break;
+            }
+        }
+        page->bottomText->SetMessage(bmgId);
+    }
+    else page->Pages::SinglePlayer::OnExternalButtonSelect(button, hudSlotId);
+}
+kmWritePointer(0x808D9F64, &OnButtonSelect);
+
+
+
+//Sets the ttMode based on which button was clicked
+void OnButtonClick(Pages::SinglePlayer* page, PushButton& button, u32 hudSlotId) {
+    const u32 id = button.buttonId;
+    if(page->externControlCount > 4 && id == page->externControlCount - 1) {
+        ExpSection::GetSection()->GetPulPage<SettingsPanel>()->prevPageId = PAGE_SINGLE_PLAYER_MENU;
+        page->nextPageId = static_cast<PageId>(SettingsPanel::id);
+        page->EndStateAnimated(0, button.GetAnimationFrameSize());
+        return;
+    }
+
+    if(id == 1 || id > 3) button.buttonId = 1;
+    page->Pages::SinglePlayer::OnButtonClick(button, hudSlotId);
+    button.buttonId = id;
+    System* system = System::sInstance;
+    if(id == 1 || id > 3) {
+        TTMode mode = TTMODE_150;
+        switch(page->externControlCount) {
+            case(6):
+                if(id > 3) {
+                    if(system->GetInfo().Has200cc()) mode = TTMODE_200;
+                    else mode = TTMODE_150_FEATHER;
+                }
+                break;
+            case(8):
+                if(id > 3) mode = (TTMode)(id - 3);
+                break;
+        }
+        system->ttMode = mode;
+        SetCC();
+    }
+}
+kmWritePointer(0x808BBED0, OnButtonClick);
+}//namespace UI
+
+//Sets the CC (based on the mode) when retrying after setting a time, as racedata's CC is overwritten usually
+static void SetCC() {
+    const System* system = System::sInstance;
+    EngineClass cc = CC_150;
+    if(system->ttMode == TTMODE_200 || system->ttMode == TTMODE_200_FEATHER) cc = CC_100;
+    Racedata::sInstance->menusScenario.settings.engineClass = cc;
+}
+kmBranch(0x805e1ef4, SetCC);
+kmBranch(0x805e1d58, SetCC);
+
+}//namespace Pulsar
+
+ExpWFCMainPage.cpp
+#include <MarioKartWii/UI/Page/Other/GlobeSearch.hpp>
+#include <MarioKartWii/RKSYS/RKSYSMgr.hpp>
+#include <Settings/UI/ExpWFCMainPage.hpp>
+#include <UI/UI.hpp>
+
+namespace Pulsar {
+namespace UI {
+//EXPANDED WFC, keeping WW button and just hiding it in case it is ever needed...
+
+kmWrite32(0x8064b984, 0x60000000); //nop the InitControl call in the init func
+kmWrite24(0x80899a36, 'PUL'); //8064ba38
+kmWrite24(0x80899a5B, 'PUL'); //8064ba90
+
+void ExpWFCMain::OnInit() {
+    this->InitControlGroup(6); //5 controls usually + settings button
+    WFCMainMenu::OnInit();
+    this->AddControl(5, settingsButton, 0);
+
+    this->settingsButton.Load(UI::buttonFolder, "Settings1P", "Settings", 1, 0, false);
+    this->settingsButton.buttonId = 5;
+    this->settingsButton.SetOnClickHandler(this->onSettingsClick, 0);
+    this->settingsButton.SetOnSelectHandler(this->onButtonSelectHandler);
+
+    this->topSettingsPage = SettingsPanel::id;
+}
+
+void ExpWFCMain::OnSettingsButtonClick(PushButton& pushButton, u32 r5) {
+    ExpSection::GetSection()->GetPulPage<SettingsPanel>()->prevPageId = PAGE_WFC_MAIN;
+    this->nextPageId = static_cast<PageId>(this->topSettingsPage);
+    this->EndStateAnimated(0, pushButton.GetAnimationFrameSize());
+}
+
+void ExpWFCMain::ExtOnButtonSelect(PushButton& button, u32 hudSlotId) {
+    if(button.buttonId == 5) {
+        u32 bmgId = BMG_SETTINGS_BOTTOM + 1;
+        if(this->topSettingsPage == PAGE_VS_TEAMS_VIEW) bmgId += 1;
+        else if(this->topSettingsPage == PAGE_BATTLE_MODE_SELECT) bmgId += 2;
+        this->bottomText.SetMessage(bmgId, 0);
+    }
+    else this->OnButtonSelect(button, hudSlotId);
+}
+
+//ExpWFCModeSel
+// kmWrite32(0x8064c284, 0x38800001); //distance func
+// void ExpWFCModeSel::InitOTTButton(ExpWFCModeSel& self) {
+//     self.InitControlGroup(6);
+//     self.AddControl(5, self.ottButton, 0);
+//     self.ottButton.Load(UI::buttonFolder, "PULOTTButton", "PULOTTButton", 1, 0, 0);
+//     self.ottButton.buttonId = ottButtonId;
+//     self.ottButton.SetOnClickHandler(self.onModeButtonClickHandler, 0);
+//     self.ottButton.SetOnSelectHandler(self.onButtonSelectHandler);
+
+//     Text::Info info;
+//     RKSYS::Mgr* rksysMgr = RKSYS::Mgr::sInstance;
+//     u32 vr = 0;
+//     if(rksysMgr->curLicenseId >= 0) {
+//         RKSYS::LicenseMgr& license = rksysMgr->licenses[rksysMgr->curLicenseId];
+//         vr = license.vr.points;
+//     }
+//     info.intToPass[0] = vr;
+//     self.ottButton.SetTextBoxMessage("go", BMG_RATING, &info);
+// }
+// kmCall(0x8064c294, ExpWFCModeSel::InitOTTButton);
+
+void ExpWFCModeSel::OnActivatePatch() {
+    register ExpWFCModeSel* page;
+    asm(mr page, r29;);
+    register Pages::GlobeSearch* search;
+    asm(mr search, r30;);
+    const bool isHidden = search->searchType == 1 ? false : true; //make the button visible if continental was clicked
+    page->ottButton.isHidden = isHidden;
+    page->ottButton.manipulator.inaccessible = isHidden;
+    page->nextPage = PAGE_NONE;
+    PushButton* button = &page->vsButton;
+    u32 bmgId = UI::BMG_RACE_WITH11P;
+    switch(page->lastClickedButton) { //case 1 is already default
+        case 2:
+            button = &page->battleButton;
+            bmgId = UI::BMG_BATTLE_WITH6P;
+            break;
+            case
+            ottButtonId: button = &page->ottButton;
+                bmgId = UI::BMG_OTT_WW_BOTTOM;
+                break;
+    }
+    page->bottomText.SetMessage(bmgId);
+    button->SelectInitial(0);
+}
+kmCall(0x8064c5f0, ExpWFCModeSel::OnActivatePatch);
+
+void ExpWFCModeSel::OnModeButtonSelect(PushButton& modeButton, u32 hudSlotId) {
+    if(modeButton.buttonId == ottButtonId) {
+        this->bottomText.SetMessage(BMG_OTT_WW_BOTTOM);
+    }
+    else WFCModeSelect::OnModeButtonSelect(modeButton, hudSlotId);
+}
+
+void ExpWFCModeSel::OnModeButtonClick(PushButton& modeButton, u32 hudSlotId) {
+    const u32 prevId = modeButton.buttonId;
+    this->lastClickedButton = prevId;
+    bool isOTT = false;
+    if(prevId == ottButtonId) {
+        isOTT = true;
+        modeButton.buttonId = 1;
+    }
+    System::sInstance->netMgr.ownStatusData = isOTT;
+    WFCModeSelect::OnModeButtonClick(modeButton, hudSlotId);
+    modeButton.buttonId = prevId;
+}
+
+//change initial button and instruction
+//kmWrite32(0x8064bcb4, 0x386306d8);
+//kmWrite32(0x8064bcc0, 0x388010d8);
+}//namespace UI
+}//namespace Pulsar
+
+ExpWFCMainPage.hpp
+#ifndef _PUL_WFC_
+#define _PUL_WFC_
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Page/Other/WFCMenu.hpp>
+#include <Settings/UI/SettingsPanel.hpp>
+
+//Extends WFCMainMenu to add a settings button
+namespace Pulsar {
+namespace UI {
+class ExpWFCMain : public Pages::WFCMainMenu {
+public:
+    ExpWFCMain() {
+        this->onSettingsClick.subject = this;
+        this->onSettingsClick.ptmf = &ExpWFCMain::OnSettingsButtonClick;
+        this->onButtonSelectHandler.ptmf = &ExpWFCMain::ExtOnButtonSelect;
+    }
+    void OnInit() override;
+private:
+    void OnSettingsButtonClick(PushButton& PushButton, u32 r5);
+    void ExtOnButtonSelect(PushButton& pushButton, u32 hudSlotId);
+    PtmfHolder_2A<ExpWFCMain, void, PushButton&, u32> onSettingsClick;
+    PushButton settingsButton;
+public:
+    PulPageId topSettingsPage;
+};
+
+class ExpWFCModeSel : public Pages::WFCModeSelect {
+public:
+    ExpWFCModeSel() : lastClickedButton(0) {
+        this->onButtonSelectHandler.ptmf = &ExpWFCModeSel::OnModeButtonSelect;
+        this->onModeButtonClickHandler.ptmf = &ExpWFCModeSel::OnModeButtonClick;
+    }
+    static void InitOTTButton(ExpWFCModeSel& self);
+    static void OnActivatePatch();
+private:
+    void OnModeButtonSelect(PushButton& modeButton, u32 hudSlotId); //8064c718
+    void OnModeButtonClick(PushButton& PushButton, u32 r5);
+    PushButton ottButton;
+    u32 lastClickedButton;
+    static const u32 ottButtonId = 4;
+};
+}//namespace UI
+}//namespace Pulsar
+
+#endif
+
+SettingsPanel.cpp
+#include <Settings/UI/SettingsPanel.hpp>
+#include <Settings/Settings.hpp>
+#include <Settings/UI/ExpOptionsPage.hpp>
+#include <Settings/UI/ExpFroomPage.hpp>
+#include <Settings/UI/ExpWFCMainPage.hpp>
+#include <SlotExpansion/CupsConfig.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+//SETTINGS PANEL
+SettingsPanel::SettingsPanel()
+{
+    bmgOffset = BMG_USERSETTINGSOFFSET;
+    sheetIdx = Settings::Params::pulsarPageCount;
+    catIdx = 0;
+    externControlCount = 3;
+    internControlCount = Settings::Params::maxRadioCount + Settings::Params::maxScrollerCount;
+    hasBackButton = false;
+    nextPageId = static_cast<PageId>(id);
+    //titleBmg = BMG_SETTINGS_TITLE;
+    activePlayerBitfield = 1;
+    movieStartFrame = -1;
+    extraControlNumber = 0;
+    isLocked = false;
+    controlCount = 0;
+    nextSection = SECTION_NONE;
+    controlSources = 2;
+
+    SectionId id = SectionMgr::sInstance->curSection->sectionId;
+    if(id == SECTION_OPTIONS) prevPageId = PAGE_OPTIONS;
+    else if((id == SECTION_P1_WIFI) || (id == SECTION_P1_WIFI_FROM_FROOM_RACE) || (id == SECTION_P1_WIFI_FROM_FIND_FRIEND)
+        || (id == SECTION_P2_WIFI) || (id == SECTION_P2_WIFI_FROM_FROOM_RACE)) prevPageId = PAGE_WFC_MAIN;
+    else if(id >= SECTION_LICENSE_SETTINGS_MENU && id <= SECTION_SINGLE_P_LIST_RACE_GHOST) prevPageId = PAGE_SINGLE_PLAYER_MENU;
+
+    onMessageBoxClickHandler.ptmf = &Menu::ChangeToPrevSection;
+
+    onRadioButtonClickHandler.subject = this;
+    onRadioButtonClickHandler.ptmf = &SettingsPanel::OnRadioButtonClick;
+    onRadioButtonChangeHandler.subject = this;
+    onRadioButtonChangeHandler.ptmf = &SettingsPanel::OnRadioButtonChange;
+
+    onUpDownClickHandler.subject = this;
+    onUpDownClickHandler.ptmf = &SettingsPanel::OnUpDownClick;
+    onUpDownSelectHandler.subject = this;
+    onUpDownSelectHandler.ptmf = &SettingsPanel::OnUpDownSelect;
+
+    onTextChangeHandler.subject = this;
+    onTextChangeHandler.ptmf = &SettingsPanel::OnTextChange;
+
+    onButtonSelectHandler.subject = this;
+    onButtonSelectHandler.ptmf = &SettingsPanel::OnExternalButtonSelect;
+    onButtonDeselectHandler.subject = this;
+    onButtonDeselectHandler.ptmf = &Pages::VSSettings::OnButtonDeselect;
+    onBackPressHandler.subject = this;
+    onBackPressHandler.ptmf = &SettingsPanel::OnBackPress;
+    onStartPressHandler.subject = this;
+    onStartPressHandler.ptmf = &MenuInteractable::HandleStartPress;
+
+    onButtonClickHandler.subject = this;
+    onButtonClickHandler.ptmf = &SettingsPanel::OnSaveButtonClick;
+    onRightButtonClickHandler.subject = this;
+    onRightButtonClickHandler.ptmf = &SettingsPanel::OnRightButtonClick;
+    onLeftButtonClickHandler.subject = this;
+    onLeftButtonClickHandler.ptmf = &SettingsPanel::OnLeftButtonClick;
+
+    this->controlsManipulatorManager.Init(1, false);
+    this->SetManipulatorManager(controlsManipulatorManager);
+    this->controlsManipulatorManager.SetGlobalHandler(START_PRESS, onStartPressHandler, false, false);
+    this->controlsManipulatorManager.SetGlobalHandler(BACK_PRESS, onBackPressHandler, false, false);
+};
+
+SettingsPanel::~SettingsPanel() {
+    Settings::Mgr* mgr = Settings::Mgr::sInstance;
+    mgr->SetLastSelectedCup(CupsConfig::sInstance->lastSelectedCup);
+    mgr->RequestSave();
+    //delete[] radioButtonControls;
+    //delete[] upDownControls;
+    //delete[] textUpDown;
+}
+
+void SettingsPanel::OnInit() {
+    //radioButtonControls = new RadioButtonControl[this->radioCount];
+    //upDownControls = new UpDownControl[this->scrollersCount];
+    //textUpDown = new TextUpDownValueControl[this->scrollersCount];
+
+    const Settings::Mgr& settings = Settings::Mgr::Get();
+    for(int i = 0; i < Settings::Params::pageCount; ++i) {
+        for(int radioIdx = 0; radioIdx < Settings::Params::radioCount[i]; ++radioIdx) {
+            this->radioSettings[i][radioIdx] = settings.GetSettingValue(static_cast<Settings::Type>(i), radioIdx);
+        }
+        for(int scrollerIdx = 0; scrollerIdx < Settings::Params::scrollerCount[i]; ++scrollerIdx) {
+            this->scrollerSettings[i][scrollerIdx] = settings.GetSettingValue(static_cast<Settings::Type>(i), scrollerIdx + 6);
+        }
+    }
+    MenuInteractable::OnInit();
+    this->SetTransitionSound(0, 0);
+};
+
+UIControl* SettingsPanel::CreateExternalControl(u32 id) {
+    const char* variant = "SAVE";
+    if(id == 1) variant = "RIGHT";
+    else if(id == 2) variant = "LEFT";
+    PushButton* button = new(PushButton);
+    this->AddControl(this->controlCount++, *button, 0);
+    button->Load(UI::buttonFolder, "Settings", variant, this->activePlayerBitfield, 0, false);
+    return button;
+};
+
+UIControl* SettingsPanel::CreateControl(u32 id) {
+    const Settings::Mgr& settings = Settings::Mgr::Get();
+    if(id < Settings::Params::maxRadioCount) {
+        RadioButtonControl& radioButtonControl = this->radioButtonControls[id];
+        this->AddControl(this->controlCount++, radioButtonControl, 0);
+
+        char variant[12];
+        char option0Variant[12];
+        char option1Variant[12];
+        char option2Variant[12];
+        char option3Variant[12];
+        snprintf(variant, 12, "Row%d", id);
+        snprintf(option0Variant, 12, "%sOption%d", variant, 0);
+        snprintf(option1Variant, 12, "%sOption%d", variant, 1);
+        snprintf(option2Variant, 12, "%sOption%d", variant, 2);
+        snprintf(option3Variant, 12, "%sOption%d", variant, 3);
+
+        const char* optionVariants[5] ={ option0Variant, option1Variant, option2Variant, option3Variant, nullptr };
+        radioButtonControl.Load(4, 0, UI::controlFolder, "RadioBase", variant, "RadioOption", optionVariants, 1, 0, 0);
+        radioButtonControl.SetOnClickHandler(this->onRadioButtonClickHandler);
+        radioButtonControl.SetOnChangeHandler(this->onRadioButtonChangeHandler);
+        radioButtonControl.id = id;
+
+    }
+    else if(id < (Settings::Params::maxRadioCount + Settings::Params::maxScrollerCount)) {
+        id -= Settings::Params::maxRadioCount;
+        UpDownControl& upDownControl = this->upDownControls[id];
+        this->AddControl(this->controlCount, upDownControl, 0);
+        ++this->controlCount;
+
+        char variant[12];
+        snprintf(variant, 12, "UpDown%d", id);
+
+        upDownControl.Load(7, 0, UI::controlFolder, "UpDownBase", variant, "UpDownR", "Right", "UpDownL",
+            "Left", &this->textUpDown[id], 1, 0, false, true, true);
+        upDownControl.SetOnClickHandler(this->onUpDownClickHandler);
+        upDownControl.SetOnSelectHandler(this->onUpDownSelectHandler);
+        upDownControl.id = id;
+
+        TextUpDownValueControl& valueControl = this->textUpDown[id];
+        valueControl.Load(UI::controlFolder, "UpDownValue", "Value", "UpDownText", "Text");
+        valueControl.SetOnTextChangeHandler(this->onTextChangeHandler);
+
+    }
+    return nullptr;
+}
+
+void SettingsPanel::SetButtonHandlers(PushButton& button) {
+    PtmfHolder_2A<MenuInteractable, void, PushButton&, u32>* onClickHandler = &this->onButtonClickHandler;
+    if(button.buttonId == 1) onClickHandler = &this->onRightButtonClickHandler;
+    else if(button.buttonId == 2) onClickHandler = &this->onLeftButtonClickHandler;
+    button.SetOnClickHandler(*onClickHandler, 0);
+    button.SetOnSelectHandler(this->onButtonSelectHandler);
+    button.SetOnDeselectHandler(this->onButtonDeselectHandler);
+}
+
+void SettingsPanel::OnActivate() {
+    this->titleBmg = this->bmgOffset + BMG_SETTINGS_TITLE + this->catIdx;
+    this->externControls[0]->SelectInitial(0);
+    this->bottomText->SetMessage(BMG_SETTINGS_BOTTOM); //no need for any offset here as this is the default "save" bottom msg
+
+    this->externControls[1]->SetMessage(BMG_SETTINGS_PAGE + this->GetNextBMGOffset(1));
+    this->externControls[2]->SetMessage(BMG_SETTINGS_PAGE + this->GetNextBMGOffset(-1));
+    for(int i = 0; i < Settings::Params::maxRadioCount; ++i) {
+        RadioButtonControl& radio = this->radioButtonControls[i];
+        bool isDisabled = false;
+        if(i >= Settings::Params::radioCount[this->sheetIdx]) isDisabled = true;
+        radio.isHidden = isDisabled;
+        radio.manipulator.inaccessible = isDisabled;
+
+        if(!isDisabled) {
+            radio.buttonsCount = Settings::Params::buttonsPerPagePerRow[this->sheetIdx][radio.id];
+            const u8 setting = this->radioSettings[this->sheetIdx][radio.id];
+            radio.chosenButtonId = setting;
+            radio.selectedButtonId = setting;
+            u32 bmgCategory = this->bmgOffset + BMG_RADIO_SETTINGS + (this->catIdx << 12);
+            radio.SetMessage(radio.id + bmgCategory);
+
+            for(int j = 0; j < 4; ++j) {
+                bool isHidden = false;
+                if(j >= Settings::Params::buttonsPerPagePerRow[this->sheetIdx][radio.id]) isHidden = true;
+                radio.optionButtonsArray[j].isHidden = isHidden;
+                if(!isHidden) radio.optionButtonsArray[j].SetMessage((radio.id + 1 << 4) + j + bmgCategory);
+            }
+        }
+    }
+    for(int i = 0; i < Settings::Params::maxScrollerCount; ++i) {
+        UpDownControl& scroller = this->upDownControls[i];
+        TextUpDownValueControl& valueControl = this->textUpDown[i];
+        bool isDisabled = false;
+        if(i >= Settings::Params::scrollerCount[this->sheetIdx]) isDisabled = true;
+        scroller.isHidden = isDisabled;
+        scroller.manipulator.inaccessible = isDisabled;
+        scroller.optionsCount = Settings::Params::optionsPerPagePerScroller[this->sheetIdx][i];
+        valueControl.isHidden = isDisabled;
+        if(!isDisabled) {
+            scroller.curSelectedOption = this->scrollerSettings[this->sheetIdx][i];
+            u32 bmgCategory = this->bmgOffset + BMG_SCROLLER_SETTINGS + (this->catIdx << 12);
+            scroller.SetMessage(scroller.id + bmgCategory);
+            valueControl.activeTextValueControl->SetMessage((scroller.id + 1 << 4) + bmgCategory);
+        }
+
+
+
+    }
+    MenuInteractable::OnActivate();
+}
+
+const ut::detail::RuntimeTypeInfo* SettingsPanel::GetRuntimeTypeInfo() const {
+    return Pages::VSSettings::typeInfo;
+}
+
+void SettingsPanel::OnExternalButtonSelect(PushButton& button, u32 r5) {
+    u32 bmgId = BMG_SETTINGS_BOTTOM; //default "save"
+    const u32 id = button.buttonId;
+
+    if(id == 1) bmgId += 1 + this->GetNextBMGOffset(1);
+    else if(id == 2)  bmgId += 1 + this->GetNextBMGOffset(-1);
+    this->bottomText->SetMessage(bmgId);
+}
+
+int SettingsPanel::GetActivePlayerBitfield() const {
+    return this->activePlayerBitfield;
+}
+
+int SettingsPanel::GetPlayerBitfield() const {
+    return this->playerBitfield;
+}
+
+ManipulatorManager& SettingsPanel::GetManipulatorManager() {
+    return this->controlsManipulatorManager;
+}
+
+void SettingsPanel::LoadPrevMenuAndSaveSettings(PushButton& button) {
+    this->LoadPrevPage(button);
+    const Section* section = SectionMgr::sInstance->curSection;
+    /*if(this->prevPageId == PAGE_OPTIONS) section->Get<ExpOptions>()->topSettingsPage = static_cast<PulPageId>(this->pageId);*/
+    if(this->prevPageId == PAGE_WFC_MAIN) section->Get<ExpWFCMain>()->topSettingsPage = static_cast<PulPageId>(this->pageId);
+    else if(this->prevPageId == PAGE_FRIEND_ROOM) {
+        section->Get<ExpFroom>()->topSettingsPage = static_cast<PulPageId>(this->pageId);
+        this->nextPageId = PAGE_NONE; //FriendRoom's OnResume is important
+    }
+    //else if(this->prevPageId == PAGE_SINGLE_PLAYER_MENU) ExpSinglePlayer::topSettingsPage = static_cast<PulPageId>(this->pageId);
+    this->SaveSettings(true);
+}
+
+//On Save Click/Back Press, is called and updates PulsarSettings
+void SettingsPanel::SaveSettings(bool writeFile) {
+    const ExpSection* section = ExpSection::GetSection();
+    Settings::Mgr* settings = Settings::Mgr::sInstance;
+
+    for(int count = 0; count < Settings::Params::pageCount; ++count) {
+
+        const bool isPulsarPage = count < Settings::Params::pulsarPageCount;
+        for(int i = 0; i < Settings::Params::radioCount[count]; ++i) {
+            const u8 value = this->radioSettings[count][i];
+            if(isPulsarPage) settings->SetSettingValue(static_cast<Settings::Type>(count), i, value);
+            else settings->SetUserSettingValue(static_cast<Settings::UserType>(count), i, value);
+        }
+        for(int i = 0; i < Settings::Params::scrollerCount[count]; ++i) {
+            const u8 value = this->scrollerSettings[count][i];
+            if(isPulsarPage) settings->SetSettingValue(static_cast<Settings::Type>(count), i + Settings::Params::maxRadioCount, value);
+            else settings->SetUserSettingValue(static_cast<Settings::UserType>(count), i + Settings::Params::maxRadioCount, value);
+        }
+    }
+    settings->Update();
+}
+
+void SettingsPanel::OnBackPress(u32 hudSlotId) {
+    PushButton& okButton = *this->externControls[0];
+    okButton.SelectFocus();
+    if(this->prevPageId == PAGE_WFC_MAIN) {
+        this->SaveSettings(true);
+        Pages::Menu::ChangeSectionById(SECTION_P1_WIFI, okButton);
+    } else {        
+        this->LoadPrevMenuAndSaveSettings(okButton);
+    }
+}
+
+void SettingsPanel::OnSaveButtonClick(PushButton& button, u32 hudSlotId) {
+    PushButton& okButton = *this->externControls[0];
+    okButton.SelectFocus();
+    if(this->prevPageId == PAGE_WFC_MAIN) {
+        this->SaveSettings(true);
+        Pages::Menu::ChangeSectionById(SECTION_P1_WIFI, okButton);
+    } else {        
+        this->LoadPrevMenuAndSaveSettings(button);
+    }
+}
+
+void SettingsPanel::OnRightButtonClick(PushButton& button, u32 hudSlotId) {
+    this->OnButtonClick(button, 1);
+}
+
+void SettingsPanel::OnLeftButtonClick(PushButton& button, u32 hudSlotId) {
+    this->OnButtonClick(button, -1);
+}
+
+void SettingsPanel::OnButtonClick(PushButton& button, u32 direction) {
+    this->nextPageId = this->pageId;
+    const int nextIdx = this->GetNextSheetIdx(direction);
+    this->sheetIdx = nextIdx;
+    if(nextIdx < Settings::Params::pulsarPageCount) {
+        this->catIdx = nextIdx;
+        this->bmgOffset = 0;
+    }
+    else {
+        this->catIdx = nextIdx - Settings::Params::pulsarPageCount; //5 becomes 0 if pulsarPageCount is 5
+        this->bmgOffset = BMG_USERSETTINGSOFFSET;
+    }
+
+    this->EndStateAnimated(0, button.GetAnimationFrameSize());
+    this->SaveSettings(false);
+}
+
+void SettingsPanel::OnRadioButtonClick(RadioButtonControl& radioButtonControl, u32 hudSlotId, u32 optionId) {
+    this->radioSettings[this->sheetIdx][radioButtonControl.id] = optionId;
+}
+
+void SettingsPanel::OnRadioButtonChange(RadioButtonControl& radioButtonControl, u32 hudSlotId, u32 optionId) {
+    this->bottomText->SetMessage(this->bmgOffset + BMG_RADIO_SETTINGS + (this->catIdx << 12) + (radioButtonControl.id + 1 << 8) + optionId);
+}
+
+void SettingsPanel::OnUpDownClick(UpDownControl& upDownControl, u32 hudSlotId) {
+    PushButton& okButton = *this->externControls[0];
+    okButton.Select(0);
+}
+
+void SettingsPanel::OnTextChange(TextUpDownValueControl::TextControl& text, u32 optionId) {
+
+    const u32 bmgId = this->bmgOffset + BMG_SCROLLER_SETTINGS + (this->catIdx << 12) + optionId;
+    u32 id = this->GetTextId(text);
+    this->scrollerSettings[this->sheetIdx][id] = optionId;
+
+    text.SetMessage(bmgId + (id + 1 << 4));
+    if(!this->externControls[0]->IsSelected()) {
+        this->bottomText->SetMessage(bmgId + (id + 1 << 8));
+    }
+};
+
+void SettingsPanel::OnUpDownSelect(UpDownControl& upDownControl, u32 hudSlotId) {
+    const u32 bmgId = this->bmgOffset + BMG_SCROLLER_SETTINGS + (this->catIdx << 12) + (upDownControl.id + 1 << 8) + upDownControl.curSelectedOption;
+    this->bottomText->SetMessage(bmgId);
+}
+
+int SettingsPanel::GetNextSheetIdx(s32 direction) {
+    return (this->sheetIdx + direction + Settings::Params::pageCount) % Settings::Params::pageCount;
+}
+
+int SettingsPanel::GetNextBMGOffset(s32 direction) {
+    const u32 nextIdx = this->GetNextSheetIdx(direction);
+    if(nextIdx < Settings::Params::pulsarPageCount) return nextIdx;
+    else return BMG_USERSETTINGSOFFSET + nextIdx - Settings::Params::pulsarPageCount;
+}
+
+}//namespace UI
+}//namespace Pulsar
+
+SettingsPanel.hpp
+#ifndef _PUL_SETTINGSPAGE_
+#define _PUL_SETTINGSPAGE_
+#include <kamek.hpp>
+#include <core/nw4r/ut/Misc.hpp>
+#include <MarioKartWii/UI/Section/SectionMgr.hpp>
+#include <MarioKartWii/UI/Ctrl/PushButton.hpp>
+#include <MarioKartWii/UI/Page/Menu/Menu.hpp>
+#include <MarioKartWii/UI/Page/Menu/VSSettings.hpp>
+#include <Settings/SettingsParam.hpp>
+#include <UI/UI.hpp>
+
+/*SettingsPanel which has (currently) 3 pages for menu, race and host settings
+Inspired by VSRaceSettings but does not extend it as I wanted a custom amount of radioControls/scrollers depending on the page
+*/
+
+namespace Pulsar {
+namespace UI {
+/*
+class TextUpDownValueControlwID: public TextUpDownValueControl {
+public:
+    TextUpDownValueControlwID() {};
+    void SetMessage(u32 optionId) override; //this is needed because usually the bottom message does not vary while scrolling
+    u32 id; //the onScroll handler doesn't pass the ID
+};
+*/
+
+class SettingsPanel : public Pages::MenuInteractable {
+public:
+    static const PulPageId id = PULPAGE_SETTINGS;
+
+    static inline void CreatePanels(Section* section);
+    SettingsPanel(); //max 8 radios and 8 scrollers per instance
+    ~SettingsPanel() override;
+    void OnInit() override; //To be defined
+    void OnActivate() override; //TO BE DEFINED
+    const ut::detail::RuntimeTypeInfo* GetRuntimeTypeInfo() const override; //80853bd8
+    void OnExternalButtonSelect(PushButton& button, u32 r5) override;
+    int GetActivePlayerBitfield() const override;
+    int GetPlayerBitfield() const override;
+    ManipulatorManager& GetManipulatorManager() override; //offset 0x70
+    UIControl* CreateExternalControl(u32 id) override; //0x84
+    UIControl* CreateControl(u32 id) override; //0x88
+    void SetButtonHandlers(PushButton& pushButton) override; //80853aac 0x8C
+    void OnBackPress(u32 hudSlotId);
+
+private:
+    void UpdateText();
+    void SaveSettings(bool writeFile);
+    void OnSaveButtonClick(PushButton& button, u32 hudSlotId);
+    void OnRightButtonClick(PushButton& button, u32 hudSlotId);
+    void OnLeftButtonClick(PushButton& button, u32 hudSlotId);
+    void OnButtonClick(PushButton& button, u32 direction);
+    void OnRadioButtonClick(RadioButtonControl& radioButtonControl, u32 r5, u32 optionId);
+    void OnRadioButtonChange(RadioButtonControl& radioButtonControl, u32 r5, u32 optionId);
+
+    void OnUpDownClick(UpDownControl& upDownControl, u32 hudSlotId);
+    void OnUpDownSelect(UpDownControl& upDownControl, u32 hudSlotId);
+
+    void OnTextChange(TextUpDownValueControl::TextControl& text, u32 optionId);
+    void LoadPrevMenuAndSaveSettings(PushButton& button);
+    int GetNextSheetIdx(s32 direction); //1 for right, -1 for left
+    int GetNextBMGOffset(s32 direction);
+    u32 GetTextId(const TextUpDownValueControl::TextControl& text) const {
+        TextUpDownValueControl* valueControl = static_cast<TextUpDownValueControl*>(text.parentGroup->parentControl);
+        return static_cast<int>(reinterpret_cast<u32>(valueControl) - reinterpret_cast<u32>(&this->textUpDown[0])) / sizeof(TextUpDownValueControl);
+    }
+
+    RadioButtonControl radioButtonControls[Settings::Params::maxRadioCount]; //0x6C4
+    PtmfHolder_3A<SettingsPanel, void, RadioButtonControl&, u32, u32> onRadioButtonClickHandler;
+    PtmfHolder_3A<SettingsPanel, void, RadioButtonControl&, u32, u32> onRadioButtonChangeHandler; //0x6c8
+    //u32 radioCount; //0x6dc
+    UpDownControl upDownControls[Settings::Params::maxScrollerCount]; //0x6e8
+    TextUpDownValueControl textUpDown[Settings::Params::maxScrollerCount]; //0x6ec
+    PtmfHolder_2A<SettingsPanel, void, UpDownControl&, u32> onUpDownClickHandler; //0x6f0
+    PtmfHolder_2A<SettingsPanel, void, UpDownControl&, u32> onUpDownSelectHandler; //0x704
+    PtmfHolder_2A<SettingsPanel, void, TextUpDownValueControl::TextControl&, u32> onTextChangeHandler; //0x718 when you scroll
+    //u32 scrollersCount; //0x72c
+    PtmfHolder_2A<MenuInteractable, void, PushButton&, u32> onRightButtonClickHandler; //0x738
+    PtmfHolder_2A<MenuInteractable, void, PushButton&, u32> onLeftButtonClickHandler; //0x74c
+
+    u8 radioSettings[Settings::Params::pageCount][Settings::Params::maxRadioCount];
+    u8 scrollerSettings[Settings::Params::pageCount][Settings::Params::maxScrollerCount];
+
+    u32 bmgOffset;
+public:
+    u32 sheetIdx; //0x750
+    u32 catIdx; //pulsarIdx or userIdx depending on the page
+};
+
+}//namespace UI
+}//namespace Pulsar
+#endif
+

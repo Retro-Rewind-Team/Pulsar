@@ -1,0 +1,3430 @@
+BootIntoSection.cpp
+#include <kamek.hpp>
+#include <core/rvl/pad.hpp>
+#include <core/rvl/kpad.hpp>
+#include <core/System/SystemManager.hpp>
+#include <MarioKartWii/Input/InputManager.hpp>
+#include <MarioKartWii/UI/Section/SectionMgr.hpp>
+#include <MarioKartWii/System/NdevArgsExtractor.hpp>
+#include <Settings/Settings.hpp>
+
+namespace Pulsar {
+//Implements the boot into wiimmfi setting
+static u16 controllerOnStrap = 0x0;
+
+kmWrite32(0x8000785c, 0x3be00002); //li r31, 2 if KPAD controller was used
+static bool CheckControllerStrap() {
+    //"unsafe" function that relies on no stack frame being created, which is essentially guaranteed as this doesn't call any other function
+    //I just prefer it to the asm version
+    register u32 ret;
+    asm(mr ret, r31;);
+    if(ret == 0) return false;
+    register u8 usedChannel;
+    u16 type = 0x24;
+    if(ret == 1) { //GCN
+        register PAD::Status* gcnStatus;
+        asm(addi gcnStatus, sp, 0x10;);
+        for(u8 channel = 0; channel < 4; ++channel) {
+            if(gcnStatus[channel].buttons != 0) {
+                usedChannel = channel + 1;
+                break;
+            }
+        }
+    }
+    else if(ret == 2) { //ret == 2, KPAD controller
+        asm(mr usedChannel, r29;);
+        register KPAD::Status* kpadStatus;
+        asm(addi kpadStatus, sp, 0x40;);
+        type = kpadStatus->extension + 0x11;
+    }
+    controllerOnStrap = (usedChannel << 8) + type;
+    return true;
+}
+kmCall(0x800079b0, CheckControllerStrap);
+
+char bootParams[17];
+SectionId BootIntoSection(const NdevArgsExtractor& extractor) {
+    OS::Report("BootIntoSection() - Entry\n"); // Added OS::Report here
+
+    SectionId section = SECTION_NONE;
+    const u8 bootSetting = Settings::Mgr::Get().GetSettingValue(Settings::SETTINGSTYPE_MENU, SETTINGMENU_SCROLL_BOOT);
+    u8 license = 0;
+    if(bootSetting != MENUSETTING_BOOT_DISABLED) {
+        const RKSYS::Mgr* rksysMgr = RKSYS::Mgr::sInstance;
+        if(rksysMgr->CheckLicenseMagic(bootSetting - 1)) {
+            const RKSYS::LicenseMgr* licenseMgr = &rksysMgr->licenses[bootSetting - 1];
+            if(licenseMgr->createID.miiId != 0) {
+                section = SECTION_P1_WIFI;
+                //section = SECTION_SINGLE_PLAYER_FROM_MENU;
+                license = bootSetting - 1;
+            }
+        }
+    }
+    snprintf(bootParams, 17, "-s132 -l%d -p%d", license, controllerOnStrap);
+    SystemManager::sInstance->ndevArg = bootParams;
+    extractor.ExtractAllArgs();
+    OS::Report("BootIntoSection() - Exit, section: %d\n", section); // Added OS::Report here with section value
+    return section;
+}
+kmCall(0x80634f20, BootIntoSection);
+
+//kmWrite32(0x805243e4, 0x7F65DB78); //mr r5, r27 to get slot
+using namespace Input;
+//r4 usually uses Input::Manager dummy which is slot and controller independant
+static void SetUpCorrectController(RealControllerHolder* realControllerHolder, Controller* controller) {
+    SectionPad& pad = SectionMgr::sInstance->pad;
+    const u32 controllerID = pad.padInfos[0].controllerID;  //technically hooking into a loop
+    const ControllerType controllerType = pad.GetType(pad.padInfos[0].controllerID);
+    u32 channel = ((pad.padInfos[0].controllerID & 0xFF00) >> 0x8) - 1; //to make it 0-indexed
+    register u32 loopIndex;
+    asm(mr loopIndex, r27;);
+    if(channel == loopIndex) {
+        register Manager* input;
+        asm(mr input, r30;);
+        if(controllerType == GCN) controller = &input->gcnControllers[channel];
+        else controller = &input->wiiControllers[channel];
+        pad.padInfos[0].controllerHolder = realControllerHolder;
+        pad.padInfos[0].controllerIDActive = pad.padInfos[0].controllerID;
+    }
+    realControllerHolder->SetController(controller, nullptr);
+}
+kmCall(0x805243f4, SetUpCorrectController);
+//kmWrite32(0x8061af98, 0x60000000); silent controller changing
+
+}//namespace Pulsar
+
+CommonUI.cpp
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Page/RaceMenu/RaceMenu.hpp>
+#include <MarioKartWii/UI/Page/Other/TTSplits.hpp>
+#include <MarioKartWii/UI/Page/Menu/MultiDriftSelect.hpp>
+#include <MarioKartWii/UI/Page/Other/VR.hpp>
+#include <MarioKartWii/GlobalFunctions.hpp>
+#include <PulsarSystem.hpp>
+#include <Gamemodes/OnlineTT/OnlineTT.hpp>
+#include <Gamemodes/KO/KOMgr.hpp>
+#include <Gamemodes/KO/KORaceEndPage.hpp>
+#include <Network/PulSELECT.hpp>
+#include <Network/PacketExpansion.hpp>
+#include <AutoTrackSelect/ChooseNextTrack.hpp>
+
+namespace Pulsar {
+//For hooks which are shared by different things
+namespace UI {
+
+PageId TTSplitsGetNextPage(const Pages::TTSplits& splits) {
+    const RacedataScenario& scenario = Racedata::sInstance->racesScenario;
+    const GameMode mode = scenario.settings.gamemode;
+    const bool isOTTF = System::sInstance->IsContext(PULSAR_MODE_OTT) &&
+    (RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_HOST) || 
+    (RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_NONHOST) || (RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_NONE && mode != MODE_TIME_TRIAL);
+    const bool isOTTW = System::sInstance->IsContext(PULSAR_MODE_OTT) && 
+    (RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_VS_REGIONAL) || 
+    (RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_JOINING_REGIONAL);
+
+    const SectionId sectionId = SectionMgr::sInstance->curSection->sectionId;
+    if (isOTTW) return PAGE_WW_LEADERBOARDS_UPDATE;
+    else if (isOTTF || sectionId == SECTION_GP) return PAGE_GPVS_LEADERBOARD_UPDATE;
+    else if(sectionId == SECTION_TT || sectionId == SECTION_GHOST_RACE_1 || sectionId == SECTION_GHOST_RACE_2) return PAGE_TT_LEADERBOARDS;
+    else if(sectionId >= SECTION_WATCH_GHOST_FROM_CHANNEL && sectionId <= SECTION_WATCH_GHOST_FROM_MENU) return PAGE_GHOST_REPLAY_PAUSE_MENU; //Enhanced Replay
+    return PAGE_NONE;
+}
+kmBranch(0x808561dc, TTSplitsGetNextPage);
+
+
+void LoadCorrectPageAfterMultiDrift(Pages::MultiDriftSelect* page, u32 animDirection, float animLength) {
+    page->EndStateAnimated(animLength, animDirection);
+    System* system = System::sInstance;
+    SectionMgr* sectionMgr = SectionMgr::sInstance;
+    if(system->ottMgr.voteState == OTT::COMBO_SELECTION) {
+        system->ottMgr.voteState = OTT::COMBO_SELECTED;
+        Network::ExpSELECTHandler& handler = Network::ExpSELECTHandler::Get();
+        for(int i = 0; i < 2; ++i) {
+            handler.toSendPacket.playersData[i].character = sectionMgr->sectionParams->characters[i];
+            handler.toSendPacket.playersData[i].kart = sectionMgr->sectionParams->karts[i];
+        }
+        handler.toSendPacket.allowChangeComboStatus = Network::SELECT_COMBO_SELECTED;
+    }
+    else if(sectionMgr->curSection->Get<Pages::VR>() != nullptr) {
+        page->nextPageId = IsBattle() ? PAGE_BATTLE_CUP_SELECT : PAGE_CUP_SELECT;
+    }
+}
+kmCall(0x8084b68c, LoadCorrectPageAfterMultiDrift);
+
+//if more custom racemenus added in pulsar, make the func virtual
+void RaceMenuExtraControls(Pages::RaceMenu& page, u32 gameControlCount) {
+
+    const SectionId curSectionId = SectionMgr::sInstance->curSection->sectionId;
+    if(curSectionId >= SECTION_P1_WIFI_FRIEND_VS || curSectionId >= SECTION_P2_WIFI_FRIEND_COIN) {
+        if(page.pageId == ChooseNextTrack::fakeId) return static_cast<ChooseNextTrack&>(page).InitExtraControls(gameControlCount);
+        else if(page.pageId == KO::RaceEndPage::fakeId) return static_cast<KO::RaceEndPage&>(page).InitExtraControls(gameControlCount);
+    }
+    page.InitControlGroup(gameControlCount);
+}
+kmCall(0x80858ebc, RaceMenuExtraControls);
+}//namespace UI
+
+}//namespace Pulsar
+
+FastMenus.cpp
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Page/Page.hpp>
+#include <MarioKartWii/UI/Section/SectionMgr.hpp>
+#include <Settings/Settings.hpp>
+
+namespace Pulsar {
+namespace UI {
+//Adapted from east_'s code
+static void FasterMenusOnSceneChange(SectionMgr* sectionMgr, u32 delay, u32 color) {
+    if(Settings::Mgr::Get().GetSettingValue(Settings::SETTINGSTYPE_MENU, SETTINGMENU_RADIO_FASTMENUS) == MENUSETTING_FASTMENUS_ENABLED) delay = 0;
+    sectionMgr->RequestSceneChange(delay, color);
+}
+kmCall(0x80602510, FasterMenusOnSceneChange);
+
+//Adapted from east_'s code
+static void FasterMenuPatchTransitionDelay() {
+    const u8 val = Settings::Mgr::Get().GetSettingValue(Settings::SETTINGSTYPE_MENU, SETTINGMENU_RADIO_FASTMENUS);
+    float transitionDelay = 176.0f;
+    if(val == MENUSETTING_FASTMENUS_ENABLED) {
+        transitionDelay -= transitionDelay;
+    }
+    Page::transitionDelay = transitionDelay;
+};
+static Settings::Hook FasterMenus(FasterMenuPatchTransitionDelay);
+BootHook FasterMenusBoot(FasterMenuPatchTransitionDelay, 3);
+
+}//namespace UI
+}//namespace Pulsar
+
+FroomKickPage.cpp
+#include <Gamemodes/KO/KOMgr.hpp> // or any other includes you may need
+#include <Network/PacketExpansion.hpp>
+#include <Network/Network.hpp>
+#include <UI/FroomKickPage.hpp>
+#include <MarioKartWii/RKNet/RKNetController.hpp>
+#include <MarioKartWii/UI/Section/SectionMgr.hpp>
+#include <MarioKartWii/Race/Raceinfo/Raceinfo.hpp>
+#include <MarioKartWii/UI/Page/Other/FriendRoom.hpp>
+#include <core/rvl/OS/OS.hpp>
+
+#include <UI/UI.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+FroomKickPage::FroomKickPage() {
+    hasBackButton      = true;
+    externControlCount = 0;   // No “external” controls
+    internControlCount = 25;
+    extraControlNumber = 0;
+    controlCount = 0; // Ensure controlCount starts correctly
+    controlSources     = 2;   // Typically 2 means "local + net" or so
+    titleBmg           = BMG_TEXT;   // or any BMG you like
+    nextPageId         = PAGE_FRIEND_ROOM;
+    prevPageId         = PAGE_FRIEND_ROOM;
+    nextSection        = SECTION_NONE;
+    movieStartFrame    = -1;
+    isLocked           = false;
+    activePlayerBitfield = 1; // Typically 1 means “player 1 only,” etc.
+
+    // If you want the “Start” or “Back” global handlers, set up manipulator manager
+    controlsManipulatorManager.Init(1, false);
+    SetManipulatorManager(controlsManipulatorManager);
+
+    // e.g. set global Start/Back press if you want them
+    // controlsManipulatorManager.SetGlobalHandler(START_PRESS, onStartPressHandler, false, false);
+    controlsManipulatorManager.SetGlobalHandler(BACK_PRESS, onBackPressHandler, false, false);
+
+    // PTMF handler objects
+    onButtonClickHandler.subject    = this;
+    onButtonClickHandler.ptmf       = &FroomKickPage::OnKickClick;
+
+    onButtonSelectHandler.subject   = this;
+    onButtonSelectHandler.ptmf      = &FroomKickPage::OnKickSelect;
+
+    onButtonDeselectHandler.subject = this;
+    onButtonDeselectHandler.ptmf    = &FroomKickPage::OnKickDeselect;
+
+    onBackPressHandler.subject      = this;
+    onBackPressHandler.ptmf         = &FroomKickPage::OnBackPress;
+
+    // The array arrowMiiIdx is used to track who is at each button index
+    for (int i = 0; i < 12; i++) {
+        arrowMiiIdx[i] = 0xFF;
+    }
+}
+
+void FroomKickPage::OnInit() {
+    OS::Report("FroomKickPage::OnInit() - Entry\n");
+
+    // This sets up an internal array of size = internControlCount = 25
+    // and calls FroomKickPage::CreateControl(i) for each i in [0..24].
+    // this->InitControlGroup(internControlCount);  
+    Pages::MenuInteractable::OnInit();
+
+    // Now do any additional post‐loading logic, e.g. MiiGroup
+    // Pages::FriendRoomManager *frm = SectionMgr::sInstance->curSection->Get<Pages::FriendRoomManager>();
+    // if (frm) {
+    //     this->miiGroup = &frm->miiGroup;
+    // } else {
+    //     this->miiGroup = nullptr;
+    // }
+
+    OS::Report("FroomKickPage::OnInit() - Exit\n");
+}
+
+void FroomKickPage::BeforeEntranceAnimations() {
+    Pages::MenuInteractable::BeforeEntranceAnimations();
+    OS::Report("FroomKickPage::BeforeEntranceAnimations()\n");
+
+    // Clear out any old animations or placeholders
+    this->isLocked = false;
+
+    // Hide everything to start
+    for (int i = 0; i < 12; i++) {
+        kickButtons[i].isHidden = true;
+        kickButtons[i].manipulator.inaccessible = true;
+        miis[i].isHidden = true;
+    }
+}
+
+void FroomKickPage::BeforeControlUpdate() {
+    OS::Report("FroomKickPage::BeforeControlUpdate() - Entry\n");
+
+    Pages::FriendRoomManager *frmPtr = static_cast<Pages::FriendRoomManager*>(SectionMgr::sInstance->curSection->Get<Pages::FriendRoomManager>());
+
+
+    // Fetch the RKNet::Controller instance
+    RKNet::Controller* controller = RKNet::Controller::sInstance;
+    OS::Report("FroomKickPage::BeforeControlUpdate() - RKNet::Controller instance: %p\n", controller);
+
+    // Update miiGroup each time to ensure it's current
+    
+
+    if (!controller) {
+        OS::Report("FroomKickPage::BeforeControlUpdate() - Controller is NULL, exiting early!\n");
+        return;
+    }
+
+    // Validate currentSub index
+    if (controller->currentSub >= 2) { // i think because its either 0 or 1
+        OS::Report("FroomKickPage::BeforeControlUpdate() - Invalid currentSub index: %d (MAX_SUBS: %d)\n", controller->currentSub, 2);
+        return;
+    }
+
+    RKNet::ControllerSub& sub = controller->subs[controller->currentSub];
+    OS::Report("FroomKickPage::BeforeControlUpdate() - ControllerSub details: currentSub=%d, localAid=%d, hostAid=%d, availableAids=0x%X\n",
+              controller->currentSub, sub.localAid, sub.hostAid, sub.availableAids);
+
+    // Check if connectionUserDatas is valid
+    if (!sub.connectionUserDatas) {
+        OS::Report("FroomKickPage::BeforeControlUpdate() - connectionUserDatas is NULL!\n");
+        return;
+    }
+
+    // Iterate over all possible AIDs
+    int idx = 0;
+    for (int aid = 0; aid < 12; aid++) {
+        OS::Report("FroomKickPage::BeforeControlUpdate() - Checking AID %d\n", aid);
+        if (sub.availableAids & (1 << aid)) {
+            OS::Report("FroomKickPage::BeforeControlUpdate() - AID %d is available\n", aid);
+
+            // Validate aid index
+            if (aid >= 12) { // Define MAX_AIDS appropriately (typically 12)
+                OS::Report("FroomKickPage::BeforeControlUpdate() - AID %d is out of bounds (MAX_AIDS: %d)\n", aid, 12);
+                continue;
+            }
+
+            // Fetch playersAtConsole
+            u8 playersAtConsole = sub.connectionUserDatas[aid].playersAtConsole;
+            OS::Report("FroomKickPage::BeforeControlUpdate() - AID %d has %d players at console\n", aid, playersAtConsole);
+
+            // Validate playersAtConsole
+            if (playersAtConsole > 2) { // Define MAX_PLAYERS_PER_AID appropriately
+                OS::Report("FroomKickPage::BeforeControlUpdate() - AID %d has invalid playersAtConsole: %d (MAX_PLAYERS_PER_AID: %d)\n",
+                          aid, playersAtConsole, 2);
+                playersAtConsole = 2; // Clamp to maximum
+            }
+
+            for(int player = 0; player < playersAtConsole; player++) {
+                OS::Report("FroomKickPage::BeforeControlUpdate() - Processing player %d for AID %d (idx=%d)\n", player, aid, idx);
+                if (idx < 12) {
+                    // Show Mii
+                    miis[idx].isHidden = false;
+                    OS::Report("FroomKickPage::BeforeControlUpdate() - miis[%d].isHidden set to false\n", idx);
+
+                    // Validate miiGroup
+                    if (miiGroup) {
+                        OS::Report("FroomKickPage::BeforeControlUpdate() - miiGroup is valid\n");
+
+                        // Validate arrowMiiIdx array
+                        if (idx >= sizeof(arrowMiiIdx)/sizeof(arrowMiiIdx[0])) {
+                            OS::Report("FroomKickPage::BeforeControlUpdate() - idx %d is out of bounds for arrowMiiIdx array\n", idx);
+                        } else {
+                            // Validate aid*2 + player
+                            u32 miiIdx = aid * 2 + player;
+                            if (miiIdx >= miiGroup->miiCount) { // Assuming GetMiiCount() exists
+                                OS::Report("FroomKickPage::BeforeControlUpdate() - miiIdx %d is out of range for miiGroup (MiiCount: %d)\n", miiIdx, miiGroup->miiCount);
+                            } else {
+                                miis[idx].SetMiiPane("chara",        *miiGroup, miiIdx, 2);
+                                miis[idx].SetMiiPane("chara_shadow", *miiGroup, miiIdx, 2);
+                                OS::Report("FroomKickPage::BeforeControlUpdate() - Set MiiPane for miis[%d] with miiIdx=%d\n", idx, miiIdx);
+                            }
+                            arrowMiiIdx[idx] = miiIdx;
+                            OS::Report("FroomKickPage::BeforeControlUpdate() - arrowMiiIdx[%d] set to %d\n", idx, arrowMiiIdx[idx]);
+                        }
+                    } else {
+                        OS::Report("FroomKickPage::BeforeControlUpdate() - miiGroup is NULL, skipping SetMiiPane\n");
+                    }
+
+                    // Show Kick Button
+                    kickButtons[idx].isHidden = false;
+                    kickButtons[idx].manipulator.inaccessible = false;
+                    OS::Report("FroomKickPage::BeforeControlUpdate() - kickButtons[%d].isHidden set to false and accessible\n", idx);
+
+                    // Don’t let host or local AIDs kick themselves
+                    if (aid == sub.hostAid || aid == sub.localAid) {
+                        kickButtons[idx].manipulator.inaccessible = true;
+                        OS::Report("FroomKickPage::BeforeControlUpdate() - kickButtons[%d] made inaccessible (aid=%d is host or local)\n", idx, aid);
+                    }
+                    idx++;
+                } else {
+                    OS::Report("FroomKickPage::BeforeControlUpdate() - idx %d >= 12, breaking inner loop\n", idx);
+                    break; // Prevent out-of-bounds access
+                }
+            }
+        } else {
+            OS::Report("FroomKickPage::BeforeControlUpdate() - AID %d is NOT available\n", aid);
+        }
+    }
+
+    // Hide the leftover slots
+    OS::Report("FroomKickPage::BeforeControlUpdate() - Hiding leftover slots from idx=%d to 12\n", idx);
+    for (int leftover = idx; leftover < 12; leftover++) {
+        kickButtons[leftover].isHidden = true;
+        kickButtons[leftover].manipulator.inaccessible = true;
+        miis[leftover].isHidden = true;
+        OS::Report("FroomKickPage::BeforeControlUpdate() - kickButtons[%d].isHidden=true, manipulator.inaccessible=true; miis[%d].isHidden=true\n", leftover, leftover);
+    }
+
+    OS::Report("FroomKickPage::BeforeControlUpdate() - Exit\n");
+}
+
+
+int FroomKickPage::GetActivePlayerBitfield() const {
+    OS::Report("FroomKickPage::GetActivePlayerBitfield() - Entry/Exit\n");
+    return this->activePlayerBitfield;
+}
+
+int FroomKickPage::GetPlayerBitfield() const {
+    OS::Report("FroomKickPage::GetPlayerBitfield() - Entry/Exit\n");
+    return this->playerBitfield;
+}
+
+ManipulatorManager& FroomKickPage::GetManipulatorManager() {
+    OS::Report("FroomKickPage::GetManipulatorManager() - Entry/Exit\n");
+    return this->controlsManipulatorManager;
+}
+
+UIControl* FroomKickPage::CreateExternalControl(u32 externControlId) {
+    OS::Report("FroomKickPage::CreateExternalControl() - Entry, externControlId: %d, Exit (returning nullptr)\n", externControlId);
+    return nullptr; // no external controls
+}
+
+UIControl* FroomKickPage::CreateControl(u32 controlId) {
+    u32 idx = this->controlCount;
+    this->controlCount++;
+
+    // 0..11 => Kick Buttons
+    if (controlId < 12)
+    {
+        AddControl(idx, kickButtons[controlId], /*zIndex=*/0);
+
+        // // Construct variant name e.g. KickBtn_0, KickBtn_1, etc.
+        char variant[64];
+        snprintf(variant, 64, "KickBtn_%d", controlId);
+
+        // (Optional) Actually load the button from your BRCTR or "template" SZS
+        // or if you want to do it purely in code:
+        //   loader.Load("button", "SomeKickButton", variant, animGroups);
+        //
+        // But if you prefer direct:
+        kickButtons[controlId].Load(UI::buttonFolder, "PULiMemberConfirmButton", variant, 1, 0, false);
+        kickButtons[controlId].buttonId = controlId;
+
+        // Hook up PTMF
+        kickButtons[controlId].SetOnClickHandler(onButtonClickHandler, 0);
+        kickButtons[controlId].SetOnSelectHandler(onButtonSelectHandler);
+        kickButtons[controlId].SetOnDeselectHandler(onButtonDeselectHandler);
+
+        return &kickButtons[controlId];
+    }
+    // 12..23 => Mii Controls
+    else if (controlId < 24)
+    {
+        u32 miiIdx = controlId - 12;
+        AddControl(idx, miis[miiIdx], 0);
+
+        // If you have a BRCTR for the Mii layout, do e.g.:
+        ControlLoader loader(&miis[miiIdx]);
+        char variant[64];
+        snprintf(variant, 64, "Mii%d", miiIdx);
+        static const char* miiAnim[5] = { "Translate", "TranslateRight", "TranslateLeft", nullptr, nullptr };
+        loader.Load("control", "TeamMii", variant, miiAnim);
+
+        return &miis[miiIdx];
+    }
+    // 24 => MiiName text box
+    else if (controlId == 24)
+    {
+        AddControl(idx, name, 0);
+
+        // Possibly load "TeamName"
+        ControlLoader loader(&name);
+        loader.Load("control", "TeamName", "TeamName", nullptr);
+
+        return &name;
+    }
+    // fallback
+    return nullptr;
+}
+
+
+void FroomKickPage::SetButtonHandlers(PushButton& button) {
+    OS::Report("FroomKickPage::SetButtonHandlers() - Entry, buttonId: %d, Exit (doing nothing)\n", button.buttonId);
+    // not used - we do per-button handlers in CreateControl (OnInit)
+}
+
+void FroomKickPage::OnKickClick(PushButton& button, u32 hudSlotId) {
+    OS::Report("FroomKickPage::OnKickClick() - Entry, buttonId: %d, hudSlotId: %d\n", button.buttonId, hudSlotId);
+    // Actually do the “kick”
+    const int id = button.buttonId;
+    const u8 aidSlot = CalcAIDFromIdx(id);
+    OS::Report("FroomKickPage::OnKickClick() - CalcAIDFromIdx returned: %d\n", aidSlot);
+
+    if(aidSlot != 0xFF) {
+        KickPlayer(aidSlot);
+    }
+    // Typically end the page after you do the kick, or not:
+    this->EndStateAnimated(0, button.GetAnimationFrameSize());
+    OS::Report("FroomKickPage::OnKickClick() - Exit\n");
+}
+
+void FroomKickPage::OnKickSelect(PushButton& button, u32 hudSlotId){
+    OS::Report("FroomKickPage::OnKickSelect() - Entry, buttonId: %d, hudSlotId: %d\n", button.buttonId, hudSlotId);
+    // Show Mii name
+    this->text.miis[0] = (this->miiGroup)
+        ? this->miiGroup->GetMii(this->arrowMiiIdx[button.buttonId])
+        : static_cast<Mii*>(nullptr);;
+    this->name.SetMessage(BMG_MII_NAME, &this->text);
+    OS::Report("FroomKickPage::OnKickSelect() - Exit\n");
+}
+
+void FroomKickPage::OnKickDeselect(PushButton& button, u32 hudSlotId){
+    OS::Report("FroomKickPage::OnKickDeselect() - Entry, buttonId: %d, hudSlotId: %d\n", button.buttonId, hudSlotId);
+    // optionally clear name
+    this->name.ResetTextBoxMessage("mii_name");
+    OS::Report("FroomKickPage::OnKickDeselect() - Exit\n");
+}
+
+void FroomKickPage::OnBackPress(u32 hudSlotId) {
+    OS::Report("FroomKickPage::OnBackPress() => hudSlotId=%d\n", hudSlotId);
+    // Correct: Passing u32 as expected
+    this->EndStateAnimated(0, 1.0f); 
+}
+
+// Called from OnKickClick:
+void FroomKickPage::KickPlayer(u8 aid) {
+    OS::Report("FroomKickPage::KickPlayer() - Entry, aid: %d\n", aid);
+    RKNet::Controller* controller = RKNet::Controller::sInstance;
+    OS::Report("FroomKickPage::KickPlayer() - Got RKNet::Controller: %p\n", controller);
+    if(!controller) {
+        OS::Report("FroomKickPage::KickPlayer() - Controller is NULL, exiting early!\n");
+        return;
+    }
+
+    // Force a “deny” packet to that AID so they are disconnected
+    // controller->SendRoomDeny(aid, 0x284b); // BMG_ROOM_DENY, or a new code //ERROR!
+
+    // Use ROOMHandler to send a ROOM packet to deny the player
+    RKNet::ROOMHandler* roomHandler = RKNet::ROOMHandler::sInstance;
+    OS::Report("FroomKickPage::KickPlayer() - Got RKNet::ROOMHandler: %p\n", roomHandler);
+    if (roomHandler) {
+        RKNet::ROOMPacket packet;
+        packet.messageType = 0; // RKNet::ROOMMessageType::ROOM_NORMAL_MESSAGE;
+        packet.message = 0x284b; // BMG_ROOM_DENY code
+
+        roomHandler->SetToSendPacket(aid, packet);
+        OS::Report("FroomKickPage::KickPlayer() - Sent ROOMPacket to AID: %d with message 0x284b\n", aid);
+
+        // Potentially add logic in RKNetController or ROOMHandler to process this deny packet and disconnect the AID.
+        // For now, let's assume setting the packet to send is enough for your network logic to handle disconnection based on message 0x284b
+
+    }
+
+
+    // Also remove from availableAids for us (so we see them gone immediately)
+    RKNet::ControllerSub& sub = controller->subs[controller->currentSub];
+    sub.availableAids &= ~(1 << aid);
+    sub.connectionUserDatas[aid].playersAtConsole = 0;
+    OS::Report("FroomKickPage::KickPlayer() - Removed AID %d from availableAids and set playersAtConsole to 0\n", aid);
+    OS::Report("FroomKickPage::KickPlayer() - Exit\n");
+}
+
+// This helps find the correct AID from the 0..11 UI index
+u8 FroomKickPage::CalcAIDFromIdx(u8 idx) {
+    OS::Report("FroomKickPage::CalcAIDFromIdx() - Entry, idx: %d\n", idx);
+    RKNet::Controller* controller = RKNet::Controller::sInstance;
+    OS::Report("FroomKickPage::CalcAIDFromIdx() - Got RKNet::Controller: %p\n", controller);
+    if (!controller) {
+        OS::Report("FroomKickPage::CalcAIDFromIdx() - Controller is NULL, returning 0xFF\n");
+        return 0xFF;
+    }
+    RKNet::ControllerSub& sub = controller->subs[controller->currentSub];
+    OS::Report("FroomKickPage::CalcAIDFromIdx() - Got RKNet::ControllerSub, currentSub: %d, availableAids: %x\n", controller->currentSub, sub.availableAids);
+    int found = 0;
+    for (int aid = 0; aid < 12; ++aid) {
+        if((sub.availableAids & (1 << aid)) != 0) {
+            OS::Report("FroomKickPage::CalcAIDFromIdx() - AID %d is available\n", aid);
+            for (int player=0; player < sub.connectionUserDatas[aid].playersAtConsole; ++player) {
+                OS::Report("FroomKickPage::CalcAIDFromIdx() - Checking player %d for AID %d, found count: %d, target idx: %d\n", player, aid, found, idx);
+                if(found == idx) {
+                    OS::Report("FroomKickPage::CalcAIDFromIdx() - Found AID %d for index %d, returning %d\n", aid, idx, aid);
+                    return static_cast<u8>(aid);
+                }
+                found++;
+            }
+        }
+    }
+    OS::Report("FroomKickPage::CalcAIDFromIdx() - No AID found for index %d, returning 0xFF\n", idx);
+    return 0xFF; // invalid
+}
+
+} // namespace UI
+} // namespace Pulsar
+
+FroomKickPage.hpp
+#ifndef _FROOMKICKPAGE_
+#define _FROOMKICKPAGE_
+
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Page/Menu/Menu.hpp>
+#include <MarioKartWii/UI/Page/Menu/MiiSelect.hpp>
+#include <MarioKartWii/RKNet/RKNetController.hpp>
+#include <MarioKartWii/MII/MiiGroup.hpp>
+#include <UI/UI.hpp>
+#include <UI/ToggleControls.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+class FroomKickPage : public Pages::MenuInteractable {
+public:
+    static const PulPageId id = PULPAGE_FROOMKICK;
+
+    FroomKickPage();
+
+    // Standard Page vfunc overrides
+    void OnInit() override;
+    void BeforeEntranceAnimations() override;
+    void BeforeControlUpdate() override;
+    int GetActivePlayerBitfield() const override;
+    int GetPlayerBitfield() const override;
+    ManipulatorManager& GetManipulatorManager() override;
+    UIControl* CreateExternalControl(u32 externControlId) override;
+    UIControl* CreateControl(u32 controlId) override;
+    void SetButtonHandlers(PushButton& button) override;
+    
+
+private:
+    // PTMF Handlers for the "Kick" buttons and the "Back" press
+    void OnKickClick(PushButton& button, u32 hudSlotId);
+    void OnKickSelect(PushButton& button, u32 hudSlotId);
+    void OnKickDeselect(PushButton& button, u32 hudSlotId);
+    void OnBackPress(u32 hudSlotId);
+
+    // Helper to find which AID/Slot is associated with the clicked index
+    u8 CalcAIDFromIdx(u8 idx);
+
+    // Actually do the "kick"
+     void KickPlayer(u8 aid);
+
+    // UI elements
+    PushButton kickButtons[12];   // up to 12 potential players
+    LayoutUIControl miis[12];     // show Mii heads
+    MiiName name;                 // top “Mii name” text
+    MiiGroup *miiGroup;           // from friend-room manager
+    u8 arrowMiiIdx[12];           // store (aid*2+player) or 0xFF if invalid
+    Text::Info text;
+    bool isLocked;
+
+};
+
+} // namespace UI
+} // namespace Pulsar
+
+#endif
+
+
+MiscUI.cpp
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Ctrl/CtrlRace/CtrlRaceWifi.hpp>
+#include <MarioKartWii/UI/Page/Other/Title.hpp>
+#include <MarioKartWii/UI/Page/Other/Message.hpp>
+#include <MarioKartWii/RKSYS/RKSYSMgr.hpp>
+#include <MarioKartWii/GlobalFunctions.hpp>
+#include <PulsarSystem.hpp>
+#include <AutoTrackSelect/ChooseNextTrack.hpp>
+#include <Gamemodes/KO/KOMgr.hpp>
+#include <Gamemodes/KO/KORaceEndPage.hpp>
+#include <Debug/Debug.hpp>
+#include <UI/UI.hpp>
+
+
+
+namespace Pulsar {
+
+namespace UI {
+//No ghost saving on RKSYS
+kmWrite32(0x8054913C, 0x60000000);
+kmWrite32(0x80855f48, 0x48000148);
+
+//BMG size patch (Diamond)
+kmWrite32(0x8007B37C, 0x38000128);
+
+static PageId AfterWifiResults(PageId id) {
+    const SectionMgr* sectionMgr = SectionMgr::sInstance;
+    const System* system = System::sInstance;
+
+    if (system->IsContext(PULSAR_MODE_KO)) id = system->koMgr->KickPlayersOut(id); //return KO::RaceEndPage with the choice to spectate if the local players are out 
+    // if (id != static_cast<PageId>(KO::RaceEndPage::id) && system->IsContext(PULSAR_HAW)) {
+    //     ChooseNextTrack* chooseNext = ExpSection::GetSection()->GetPulPage<ChooseNextTrack>();
+    //     if (chooseNext != nullptr) id = chooseNext->GetPageAfterWifiResults(id);
+    // }
+    return id;
+}
+kmBranch(0x80646754, AfterWifiResults);
+
+
+//Credit to Kazuki for making the original ASM code, and Brawlbox for porting it to C++
+static void LaunchRiivolutionButton(SectionMgr* sectionMgr) {
+    const SectionId id = sectionMgr->nextSectionId;
+    if (id == SECTION_CHANNEL_FROM_MENU || id == SECTION_CHANNEL_FROM_CHECK_RANKINGS || id == SECTION_CHANNEL_FROM_DOWNLOADS) Debug::LaunchSoftware();
+    else sectionMgr->LoadSection();
+}
+kmCall(0x80553a60, LaunchRiivolutionButton);
+
+//Top left message when a race is about to start in a froom
+static void FixStartMessageFroom(CtrlRaceWifiStartMessage* startMsg, u32 bmgId, Text::Info* info) {
+    const SectionMgr* sectionMgr = SectionMgr::sInstance;
+    const SectionId id = sectionMgr->curSection->sectionId;
+    if (id == SECTION_P1_WIFI_FRIEND_VS || id == SECTION_P1_WIFI_FRIEND_TEAMVS
+        || id == SECTION_P2_WIFI_FRIEND_VS || id == SECTION_P2_WIFI_FRIEND_TEAMVS) {
+        const System* system = System::sInstance;
+        const u32 raceNumber = sectionMgr->sectionParams->onlineParams.currentRaceNumber + 1;
+        bmgId = BMG_GP_RACE;
+        if (system->IsContext(PULSAR_MODE_KO)) {
+            const KO::Mgr* koMgr = system->koMgr;
+            const u32 playerCount = system->nonTTGhostPlayersCount;
+            u32 koCount = 0;
+            if (playerCount == 2) koCount = 1;
+            else if (raceNumber % koMgr->racesPerKO == 0) {
+                const u32 koPerRace = koMgr->koPerRace;
+                if (playerCount - koPerRace > 1) koCount = koPerRace; //eliminating the setting's amount of players, does not lead in a potential final
+                else koCount = playerCount - (1 + koMgr->alwaysFinal); //check if the setting is on, if it is, leave 2 players, otherwise, leave 1 player/the ko count is the complement
+            }
+            bmgId = BMG_KO_ELIM_START_NONE + koCount;
+        }
+        info->intToPass[0] = raceNumber;
+        info->intToPass[1] = system->netMgr.racesPerGP + 1;
+    }
+    startMsg->SetMessage(bmgId, info);
+}
+kmCall(0x807f8b7c, FixStartMessageFroom);
+
+static void DisplayDate(CtrlMenuPressStart* start) {
+    start->Load();
+    start->SetMessage(BMG_DATE);
+}
+kmCall(0x8063ac58, DisplayDate);
+
+static void CustomRoomDenyText(Pages::MessageBoxTransparent* msgBox, u32 bmgId, const Text::Info* info) {
+    if (Pulsar::System::sInstance->netMgr.denyType == Network::DENY_TYPE_BAD_PACK) bmgId = BMG_ROOM_DENY;
+    msgBox->SetMessageWindowText(bmgId, info);
+}
+kmCall(0x805dd90c, CustomRoomDenyText);
+
+SectionParams& FavouriteCombo(SectionParams& params) {
+    const RKSYS::Mgr* rksysMgr = RKSYS::Mgr::sInstance;
+    s32 curLicense = rksysMgr->curLicenseId;
+    if (curLicense >= 0) {
+        const RKSYS::LicenseMgr& license = rksysMgr->licenses[curLicense];
+        CharacterId favChar = license.GetFavouriteCharacter();
+        KartId favKart = license.GetFavouriteKart();
+
+        const s32 charWeight = GetCharacterWeightClass(favChar);
+        const s32 kartWeight = GetKartWeightClass(favKart);
+        if (kartWeight != -1) {
+            if (charWeight == -1 || charWeight != kartWeight) {
+                switch (kartWeight) {
+                case 0:
+                    favChar = BABY_DAISY;
+                    break;
+                case 1:
+                    favChar = DAISY;
+                    break;
+                case 2:
+                    favChar = FUNKY_KONG;
+                }
+            }
+            params.characters[0] = favChar;
+            params.karts[0] = favKart;
+            params.combos[0].selCharacter = favChar;
+            params.combos[0].selKart = favKart;
+        }
+    }
+
+    return params;
+}
+kmBranch(0x805e4228, FavouriteCombo);
+
+u8 ModifyCheckRankings() {
+    register Pages::RaceMenu* ttEnd;
+    asm(mr ttEnd, r28;);
+    register float animLength;
+    asm(fmr animLength, f31;);
+    ttEnd->ChangeSectionBySceneChange(SECTION_P1_WIFI, 0, animLength);
+    return 0;
+    //ttEnd->EndStateAnimated(0, animLength);
+
+}
+kmCall(0x8085b4bc, ModifyCheckRankings);
+kmPatchExitPoint(ModifyCheckRankings, 0x8085bbe0);
+
+
+}//namespace UI
+}//namespace Pulsar
+
+
+ToggleControls.cpp
+#include <UI/ToggleControls.hpp>
+
+namespace  Pulsar {
+namespace UI {
+
+static const char* anims[7] ={ "Choice", "ChoiceOff", "ChoiceOffToOn", "ChoiceOn", "ChoiceOnToOff", nullptr, nullptr };
+
+void ToggleButton::ToggleState(bool state) {
+    if(this->state != state) {
+        u32 id = this->state ? 0 : 2;
+        this->animator.GetAnimationGroupById(4).PlayAnimationAtFrame(id, 0.0f); //choice
+        this->state = !this->state;
+    }
+}
+
+void ToggleButton::OnClick(u32, u32) {
+    AnimationGroup& choiceGroup = this->animator.GetAnimationGroupById(4); //choice group, off, offtoon, on, ontooff
+    const u32 curAnimation = choiceGroup.curAnimation;
+    const bool curState = this->state;
+    this->state = !this->state;
+    if(curState == true && curAnimation == 1 || curState == false && curAnimation == 3) {
+        float frameSize = static_cast<float>(choiceGroup.animations[curAnimation].transform->GetFrameSize());
+        choiceGroup.PlayAnimationAtPercent(1, 1.0f - 75.0f / frameSize);
+    }
+    else if(curState == true && curAnimation == 2) choiceGroup.PlayAnimationAtFrame(3, 0.0f);
+    else if(curState == false && curAnimation == 0) choiceGroup.PlayAnimationAtFrame(1, 0.0f);
+}
+
+void ToggleButton::Load(u32 localPlayerBitfield, const char* folderName, const char* ctrName, const char* variant) {
+    this->LoadWithAnims(anims, folderName, ctrName, variant, localPlayerBitfield, 0);
+    AnimationGroup& choiceGroup = this->animator.GetAnimationGroupById(4); //choice, pattern and colours on click
+    choiceGroup.PlayAnimationAtFrame(this->state ? 2 : 0, 0.0f);
+}
+
+/*
+void ToggleControl::Load(const char* folderName, const char* ctrName, const char* variant) {
+    ControlLoader loader(this);
+    loader.Load(folderName, ctrName, variant, anims);
+    AnimationGroup& choiceGroup = this->animator.GetAnimationGroupById(0); //choice, pattern and colours on click
+    choiceGroup.PlayAnimationAtFrame(this->state ? 2 : 0, 0.0f);
+}
+
+void ToggleControl::ToggleState(bool state) {
+    if(this->state != state) {
+        u32 id = this->state ? 0 : 2;
+        this->animator.GetAnimationGroupById(0).PlayAnimationAtFrame(id, 0.0f); //choice
+        this->state = !this->state;
+    }
+}
+
+void ToggleControl::ToggleStateAnimated() {
+    AnimationGroup& choiceGroup = this->animator.GetAnimationGroupById(0); //choice group, off, offtoon, on, ontooff
+    const u32 curAnimation = choiceGroup.curAnimation;
+    const bool curState = this->state;
+    this->state = !this->state;
+    if(curState == true && curAnimation == 1 || curState == false && curAnimation == 3) {
+        float frameSize = static_cast<float>(choiceGroup.animations[curAnimation].transform->GetFrameSize());
+        choiceGroup.PlayAnimationAtPercent(1, 1.0f - 75.0f / frameSize);
+    }
+    else if(curState == true && curAnimation == 2) choiceGroup.PlayAnimationAtFrame(3, 0.0f);
+    else if(curState == false && curAnimation == 0) choiceGroup.PlayAnimationAtFrame(1, 0.0f);
+}
+*/
+
+/*
+void ToggleButton::SelectInitial(u32 hudSlotId) {
+    this->manipulator.parentManager->SetControlManipulator(hudSlotId, this->manipulator, -1);
+    this->AnimateSelect();
+}
+
+
+
+void ToggleButton::HandleClick(u32 hudSlotId, u32 r5) {
+    AnimationGroup& selectInGroup = this->animator.GetAnimationGroupById(2);
+    selectInGroup.PlayAnimationAtFrame(0, 0.0f);
+    AnimationGroup& okGroup = this->animator.GetAnimationGroupById(3);
+    okGroup.PlayAnimationAtFrame(0, 0.0f);
+
+    AnimationGroup& choiceGroup = this->animator.GetAnimationGroupById(4); //choice group, off, offtoon, on, ontooff
+    if(this->state == true && choiceGroup.curAnimation == 1 || this->state == false && choiceGroup.curAnimation == 3) {
+        float frameSize = static_cast<float>(choiceGroup.animations[choiceGroup.curAnimation].transform->GetFrameSize());
+        choiceGroup.PlayAnimationAtPercent(1, 1.0f - 75.0f / frameSize);
+    }
+    else if(this->state == true && choiceGroup.curAnimation == 2) choiceGroup.PlayAnimationAtFrame(3, 0.0f);
+
+    else if(this->state == false && choiceGroup.curAnimation == 0) choiceGroup.PlayAnimationAtFrame(1, 0.0f);
+
+    this->state = !this->state;
+    u32 soundId = this->state == true ? 0x20 : 0xD;
+    this->PlaySound(soundId, -1);
+    if(onChangeHandler != nullptr) this->onChangeHandler->operator()(*this);
+}
+*/
+}//namespace UI
+}//namespace Pulsar
+
+ToggleControls.hpp
+#ifndef _TOGGLEBUTTON_
+#define _TOGGLEBUTTON_
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Ctrl/PushButton.hpp>
+
+namespace  Pulsar {
+namespace UI {
+/*
+class ToggleControl : public LayoutUIControl {
+public:
+    ToggleControl() : state(false) {}
+    void Load(const char* folderName, const char* ctrName, const char* variant);
+    void ToggleState(bool state); //changes the state without an animation
+    void ToggleStateAnimated();
+    inline bool GetState() const { return this->state; }
+private:
+    bool state;
+};
+*/
+class ToggleButton : public PushButton {
+public:
+    ToggleButton() : state(false) {}
+    void Load(u32 localPlayerBitfield, const char* folderName, const char* ctrName, const char* variant);
+    void ToggleState(bool state); //changes the state without an animation
+    inline bool GetState() const { return this->state; }
+private:
+    void OnClick(u32 hudSlotId, u32 r5) override;
+    bool state;
+};
+}//namespace UI
+}//namespace Pulsar
+
+#endif
+
+UI.cpp
+#include <MarioKartWii/UI/Page/RaceHUD/RaceHUD.hpp>
+#include <UI/UI.hpp>
+#include <PulsarSystem.hpp>
+
+//Expanded Pages:
+#include <Ghost/UI/ExpGhostSelect.hpp>
+#include <SlotExpansion/UI/ExpCupSelect.hpp>
+#include <UI/Leaderboard/ExpGPVSLeaderboardUpdate.hpp>
+#include <UI/Leaderboard/ExpGPVSLeaderboardTotal.hpp>
+#include <UI/Leaderboard/ExpWWLeaderboardUpdate.hpp>
+#include <UI/SelectStage/ExpVotePage.hpp>
+#include <AutoTrackSelect/ExpFroomMessages.hpp>
+#include <Settings/UI/ExpFroomPage.hpp>
+#include <Settings/UI/ExpOptionsPage.hpp>
+#include <UI/FroomKickPage.hpp>
+
+#include <Settings/UI/ExpWFCMainPage.hpp>
+#include <UI/ChangeCombo/ChangeCombo.hpp>
+
+//Pulsar Custom Pages:
+#include <UI/TeamSelect/TeamSelect.hpp>
+#include <AutoTrackSelect/AutoVote.hpp>
+#include <AutoTrackSelect/ChooseNextTrack.hpp>
+#include <Gamemodes/KO/KORaceEndPage.hpp>
+#include <Gamemodes/KO/KOMgr.hpp>
+#include <Gamemodes/KO/KOWinnerPage.hpp>
+#include <Settings/UI/SettingsPanel.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+//ExpSection
+static ExpSection* CreateSection() {
+    return new ExpSection;
+}
+kmCall(0x8063504c, CreateSection);
+kmWrite32(0x80635058, 0x60000000);
+
+void ExpSection::CreatePages(ExpSection& self, SectionId id) {
+    const System* system = System::sInstance;
+    // self.hasAutoVote = (id >= SECTION_P1_WIFI_FROOM_VS_VOTING && id <= SECTION_P2_WIFI_FROOM_COIN_VOTING) && system->IsContext(PULSAR_HAW); //can't think of a better way to do this awkward thing, where the usual pages are NOT built
+    if(!self.hasAutoVote) self.CreateSectionPages(id);
+    memset(&self.pulPages, 0, sizeof(Page*) * PULPAGE_MAX);
+    self.CreatePulPages();
+}
+kmCall(0x80622088, ExpSection::CreatePages);
+
+void ExpSection::CreatePulPages() {
+
+    const System* system = System::sInstance;
+    switch(this->sectionId) {
+
+
+        case SECTION_GP:                          //0x1e
+        case SECTION_TT:                          //0x1f
+        case SECTION_P1VS:                        //0x20
+        case SECTION_P2VS:                        //0x21
+        case SECTION_P3VS:                        //0x22
+        case SECTION_P4VS:                        //0x23
+        case SECTION_P1TEAM_VS:                   //0x24
+        case SECTION_P2TEAM_VS:                   //0x25
+        case SECTION_P3TEAM_VS:                   //0x26
+        case SECTION_P4TEAM_VS:                   //0x27
+            if(system->IsContext(PULSAR_MODE_OTT)) {
+                this->CreateAndInitPage(*this, PAGE_TT_SPLITS);
+                Pages::RaceHUD::sInstance->nextPageId = PAGE_TT_SPLITS;
+            }
+            break;
+            //case SECTION_P1_WIFI_FROOM_VS_VOTING:      //0x60
+            //case SECTION_P1_WIFI_FROOM_TEAMVS_VOTING:  //0x61
+            //case SECTION_P1_WIFI_FROOM_BALLOON_VOTING: //0x62
+            //case SECTION_P1_WIFI_FROOM_COIN_VOTING:    //0x63
+            //case SECTION_P2_WIFI_FROOM_VS_VOTING:      //0x64
+            //case SECTION_P2_WIFI_FROOM_TEAMVS_VOTING:  //0x65
+            //case SECTION_P2_WIFI_FROOM_BALLOON_VOTING: //0x66
+            //case SECTION_P2_WIFI_FROOM_COIN_VOTING:    //0x67
+
+        case SECTION_P1_WIFI_VS: //0x68
+        case SECTION_P2_WIFI_VS: //0x69
+        case SECTION_P1_WIFI_FRIEND_VS:       //0x70
+        case SECTION_P1_WIFI_FRIEND_TEAMVS:   //0x71
+        case SECTION_P2_WIFI_FRIEND_VS:       //0x74
+        case SECTION_P2_WIFI_FRIEND_TEAMVS:   //0x75
+
+            this->CreateAndInitPage(*this, FroomKickPage::id);
+
+            if(system->IsContext(PULSAR_MODE_OTT)) {
+                this->CreateAndInitPage(*this, PAGE_TT_SPLITS);
+                Pages::RaceHUD::sInstance->nextPageId = PAGE_TT_SPLITS;
+            }
+            if(system->IsContext(PULSAR_MODE_KO)) {
+                this->CreateAndInitPage(*this, KO::RaceEndPage::id);
+                this->CreateAndInitPage(*this, KO::WinnerPage::id);
+            }
+            // if(system->IsContext(PULSAR_HAW)) {
+            //     if(SectionMgr::sInstance->sectionParams->onlineParams.currentRaceNumber != System::sInstance->netMgr.racesPerGP) this->CreateAndInitPage(*this, ChooseNextTrack::id);
+            // }
+            break;
+        case SECTION_P1_WIFI_FRIEND_BALLOON:  //0x72
+        case SECTION_P1_WIFI_FRIEND_COIN:     //0x73
+        case SECTION_P2_WIFI_FRIEND_BALLOON:  //0x76
+        case SECTION_P2_WIFI_FRIEND_COIN:     //0x77
+
+            // if(system->IsContext(PULSAR_HAW)) {
+            //     const SectionParams* sectionParams = SectionMgr::sInstance->sectionParams;
+            //     if(sectionParams->redWins < 2 && sectionParams->blueWins < 2) this->CreateAndInitPage(*this, ChooseNextTrack::id);
+            // }
+            break;
+        case SECTION_SINGLE_P_FROM_MENU:         //0x48
+        case SECTION_SINGLE_P_TT_CHANGE_CHARA:   //0x49
+        case SECTION_SINGLE_P_TT_CHANGE_COURSE:  //0x4a
+        case SECTION_SINGLE_P_VS_NEXT_RACE:      //0x4b
+        case SECTION_SINGLE_P_BT_NEXT_BATTLE:    //0x4c
+        case SECTION_SINGLE_P_MR_CHOOSE_MISSION: //0x4d
+        case SECTION_SINGLE_P_CHAN_RACE_GHOST:   //0x4e
+        case SECTION_SINGLE_P_LIST_RACE_GHOST:   //0x50
+        case SECTION_P1_WIFI:                    //0x55
+        case SECTION_P1_WIFI_FROM_FROOM_RACE:    //0x56
+        case SECTION_P1_WIFI_FROM_FIND_FRIEND:   //0x57
+        case SECTION_P2_WIFI:                    //0x5b
+        case SECTION_P2_WIFI_FROM_FROOM_RACE:    //0x5c
+        case SECTION_OPTIONS:                    //0x8c
+            this->CreateAndInitPage(*this, SettingsPanel::id);
+    }
+    if(this->hasAutoVote) {
+        this->CreateAndInitPage(*this, PAGE_AUTO_ENDING2);
+        this->CreateAndInitPage(*this, PAGE_MESSAGEBOX);
+        this->CreateAndInitPage(*this, PAGE_SELECT_STAGE_MGR);
+    }
+}
+
+void ExpSection::CreateAndInitPage(ExpSection& self, u32 id) {
+
+
+    Page* page;
+    PageId initId = static_cast<PageId>(id); //in case a pulpage wants a specific init id
+    switch(id) {
+        case PAGE_CUP_SELECT:
+            page = new ExpCupSelect;
+            break;
+        case PAGE_GHOST_SELECT:
+            page = new ExpGhostSelect;
+            break;
+        case PAGE_FRIEND_ROOM:
+            page = new ExpFroom;
+            break;
+            /* not needed since only static vars
+        case PAGE_FRIEND_ROOM_MESSAGES:
+            page = new ExpFroomMessages;
+            break;
+            */
+        case PAGE_OPTIONS:
+            page = new ExpOptions;
+            break;
+            /* not needed since only static vars
+        case PAGE_SINGLE_PLAYER_MENU:
+            page = new ExpSinglePlayer;
+            break;
+            */
+        case PAGE_WFC_MAIN:
+            page = new ExpWFCMain;
+            break;
+        case PAGE_WFC_MODE_SELECT:
+            page = new ExpWFCModeSel;
+            break;
+        case PAGE_VR:
+            page = new ExpVR;
+            break;
+        case PAGE_CHARACTER_SELECT:
+            page = new ExpCharacterSelect;
+            break;
+        case PAGE_KART_SELECT:
+            page = new ExpKartSelect;
+            break;
+        case PAGE_BATTLE_KART_SELECT:
+            page = new ExpBattleKartSelect;
+            break;
+        case PAGE_MULTIPLAYER_KART_SELECT:
+            page = new ExpMultiKartSelect;
+            break;
+        case PAGE_SELECT_STAGE_MGR:
+            if(self.hasAutoVote) page = new AutoVote;
+            else page = new Pages::SELECTStageMgr;
+            break;
+        case PAGE_GPVS_LEADERBOARD_UPDATE:
+            page = new ExpGPVSLeaderboardUpdate;
+            break;
+        case PAGE_GPVS_TOTAL_LEADERBOARDS:
+            page = new ExpGPVSLeaderboardTotal;
+            break;
+        case PAGE_WW_LEADERBOARDS_UPDATE:
+            page = new ExpWWLeaderboardUpdate;
+            break;
+        case PAGE_VOTE:
+            page = new ExpVotePage;
+            break;
+            //PULPAGES
+        case ChooseNextTrack::id:
+            initId = ChooseNextTrack::fakeId;
+            page = new ChooseNextTrack;
+            break;
+        case TeamSelect::id:
+            page = new TeamSelect;
+            break;
+        case KO::RaceEndPage::id:
+            initId = KO::RaceEndPage::fakeId;
+            page = new KO::RaceEndPage;
+            break;
+        case KO::WinnerPage::id:
+            page = new KO::WinnerPage;
+            break;
+        case SettingsPanel::id:
+            page = new SettingsPanel;
+            break;
+        case FroomKickPage::id:
+            page = new FroomKickPage;
+            break;
+        default:
+            page = self.CreatePageById(initId);
+
+
+    }
+    if(id < PULPAGE_INITIAL) self.Set(page, initId);
+    else self.SetPulPage(page, static_cast<PulPageId>(id));
+    page->Init(initId);
+
+}
+kmBranch(0x80622d08, ExpSection::CreateAndInitPage);
+
+void ExpSection::DisposePulPages(SectionPad& pad, bool enablePointer) {
+    pad.EnablePointer(enablePointer); //default
+    register ExpSection* section;
+    asm(mr section, r31;);
+    for(int pulPageId = 0; pulPageId < PULPAGE_MAX; ++pulPageId) {
+        Page* page = section->pulPages[pulPageId];
+        if(page != nullptr) {
+            page->Dispose();
+            delete page;
+        }
+    }
+}
+kmCall(0x80622268, ExpSection::DisposePulPages);
+
+void ExpSection::AddPageLayer(ExpSection& self, u32 id) {
+    AddPageLayerAnimatedReturnTopLayer(self, id, 0xff);
+}
+kmBranch(0x80622da0, ExpSection::AddPageLayer);
+
+Page* ExpSection::AddPageLayerAnimatedReturnTopLayer(ExpSection& self, u32 id, u32 animDirection) {
+
+    if(animDirection == 0xff) animDirection = self.animDirection;
+    Page* page;
+    if(id < PULPAGE_INITIAL) {
+        page = self.pages[id];
+    }
+    else page = self.pulPages[id - PULPAGE_INITIAL];
+
+    self.activePages[++self.layerCount] = page;
+    if(animDirection != 0xffffffff) page->animationDirection = animDirection; //inlined Page::SetAnimDirection
+    page->Activate();
+    return page;
+}
+kmBranch(0x80622e00, ExpSection::AddPageLayerAnimatedReturnTopLayer);
+
+
+kmWrite32(0x80623128, 0x48000020); //skip the usual activate
+kmWrite32(0x80623140, 0x60000000); //nop layerCount increase, as AddPageLayer will do it for us
+kmWrite32(0x80623144, 0x60000000); //nop setanimdirection as r29 is faulty
+
+void ExpSection::SetNextPage(u32 id, u32 animDirection) {
+    register ExpSection* self;
+    asm(mr self, r28;);
+    AddPageLayerAnimatedReturnTopLayer(*self, id, animDirection);
+}
+kmCall(0x8062314c, ExpSection::SetNextPage);
+
+//Various Util funcs
+void ChangeImage(LayoutUIControl& control, const char* paneName, const char* tplName) {
+    TPLPalettePtr tplRes = static_cast<TPLPalettePtr>(control.layout.resources->multiArcResourceAccessor.GetResource(lyt::res::RESOURCETYPE_TEXTURE, tplName));
+    if(tplRes != nullptr) control.layout.GetPaneByName(paneName)->GetMaterial()->GetTexMapAry()->ReplaceImage(tplRes);
+};
+
+//Implements the use of Pulsar's BMGHolder when needed
+enum BMGType {
+    BMG_NORMAL,
+    CUSTOM_BMG,
+    //CUP_TEXT
+};
+BMGType isCustom;
+
+static int GetMsgIdxByBmgId(const BMGHolder& bmg, s32 bmgId) {
+    const BMGMessageIds& msgIds = *bmg.messageIds;
+    int ret = -1;
+    for(int i = 0; i < msgIds.msgCount; ++i) {
+        int curBmgId = msgIds.messageIds[i];
+        if(curBmgId == bmgId) {
+            ret = i;
+            break;
+        }
+        else if(curBmgId > bmgId) break;
+    }
+    return ret;
+}
+
+static int GetMsgIdxById(const BMGHolder& normalHolder, s32 bmgId) {
+
+    int ret = GetMsgIdxByBmgId(System::sInstance->GetBMG(), bmgId);
+    if(ret < 0) {
+        isCustom = BMG_NORMAL;
+        ret = GetMsgIdxByBmgId(normalHolder, bmgId);
+    }
+    else isCustom = CUSTOM_BMG;
+    return ret;
+    //}
+}
+kmBranch(0x805f8c88, GetMsgIdxById);
+
+wchar_t* GetMsgByMsgIdx(const BMGHolder& bmg, s32 msgIdx) {
+    const BMGInfo& info = *bmg.info;
+    if(msgIdx < 0 || msgIdx >= info.msgCount) return nullptr;
+    const u32 offset = info.entries[msgIdx].dat1Offset & 0xFFFFFFFE;
+    const BMGData& data = *bmg.data;
+    return reinterpret_cast<wchar_t*>((u8*)&data + offset);
+}
+
+wchar_t* GetMsg(const BMGHolder& normalHolder, s32 msgIdx) {
+    /*
+    wchar_t* ret = nullptr;
+    if(isCustom) ret = GetMsgByMsgIdx(System::sInstance->GetBMG(), msgIdx);
+    if(ret == nullptr) ret = GetMsgByMsgIdx(normalHolder, msgIdx);
+    return ret;
+    */
+
+    /*if(isCustom == CUP_TEXT) {
+        CupsConfig* config = CupsConfig::sInstance;
+        u32 idx = isCustom & 0xFFFF;
+        switch((isCustom & ~0xFFFF) >> 12) {
+            case(1):
+                return config->GetCupName(static_cast<PulsarCupId>(idx));
+            case(2):
+                return config->GetTrackName(static_cast<PulsarId>(idx));
+            case(3):
+                return config->GetTrackAuthor(static_cast<PulsarId>(idx));
+        }
+    }
+    else {*/
+    wchar_t* ret = nullptr;
+    if(isCustom == CUSTOM_BMG) ret = GetMsgByMsgIdx(System::sInstance->GetBMG(), msgIdx);
+    if(ret == nullptr) ret = GetMsgByMsgIdx(normalHolder, msgIdx);
+    return ret;
+    //}
+}
+kmBranch(0x805f8cf0, GetMsg);
+
+const u8* GetFontIndex(const BMGHolder& bmg, s32 msgIdx) {
+    const BMGInfo& info = *bmg.info;
+    if(msgIdx < 0 || msgIdx >= info.msgCount) return nullptr;
+    return &info.entries[msgIdx].font;
+};
+
+const u8* GetFont(const BMGHolder& normalHolder, s32 msgIdx) {
+    const u8* ret = nullptr;
+    //if(isCustom == CUP_TEXT) msgIdx = 0;
+    if(isCustom == CUSTOM_BMG) ret = GetFontIndex(System::sInstance->GetBMG(), msgIdx);
+    if(ret == nullptr) ret = GetFontIndex(normalHolder, msgIdx);
+    return ret;
+}
+kmBranch(0x805f8d2c, GetFont);
+
+const wchar_t* GetCustomMsg(s32 bmgId) {
+    const BMGHolder& bmg = System::sInstance->GetBMG();
+    return GetMsgByMsgIdx(bmg, GetMsgIdxById(bmg, bmgId));
+}
+void ResetMatColor(lyt::Pane* pane, u32 color) {
+    lyt::Material* mat = pane->material;
+    ut::Color colors(color);
+    mat->tevColours[0].r = colors.r;
+    mat->tevColours[0].g = colors.g;
+    mat->tevColours[0].b = colors.b;
+    mat->tevColours[0].a = colors.a;
+    mat->tevColours[1].r = 0xff;
+    mat->tevColours[1].g = 0xff;
+    mat->tevColours[1].b = 0xff;
+    mat->tevColours[1].a = 0xff;
+}
+void UnbindRLMC(lyt::Material* mat) {
+    for(ut::LinkList<lyt::AnimationLink, offsetof(lyt::AnimationLink, link)>::Iterator it = mat->animLinkList.GetBeginIter();
+        it != mat->animLinkList.GetEndIter(); ++it) {
+        if(!it->disable) {
+            lyt::AnimTransform* anim = it->animTrans;
+            u32 idx = it->idx;
+            const lyt::res::AnimationBlock* res = anim->resource;
+            u32 animOffsets = ut::ConvertOffsToPtr<u32>(res, res->animOffsetToAnimOffsetsArray)[idx];
+            const lyt::res::AnimationContent* animContent = ut::ConvertOffsToPtr<lyt::res::AnimationContent>(res, animOffsets);
+
+            const u32* animInfoOffsets = ut::ConvertOffsToPtr<u32>(animContent, sizeof(*animContent));
+            for(int i = 0; i < animContent->infoCount; ++i) {
+                const lyt::res::AnimationInfo* animInfo = ut::ConvertOffsToPtr<lyt::res::AnimationInfo>(animContent, animInfoOffsets[i]);
+                if(animInfo->kind == lyt::res::ANIMATIONTYPE_RLMC) mat->UnbindAnimation(anim);
+            }
+        }
+        if(mat->animLinkList.GetSize() == 0) break;
+    }
+}
+
+}//namespace UI
+}//namespace Pulsar
+
+UI.hpp
+#ifndef _PULUI_
+#define _PULUI_
+#include <MarioKartWii/UI/Section/SectionMgr.hpp>
+#include <MarioKartWii/UI/Ctrl/UIControl.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+void ChangeImage(LayoutUIControl& control, const char* paneName, const char* tplName);
+const wchar_t* GetCustomMsg(s32 bmgId);
+void UnbindRLMC(lyt::Material* mat);
+void ResetMatColor(lyt::Pane* pane, u32 color);
+/*Expanded pages: (do not necessitate a PulPageId)
+-ExpGhostSelect
+-ExpFroom
+-ExpFroomMessages (only static variables)
+-ExpOptions
+-ExpSinglePlayer
+-ExpWFCMain
+-ExpVR
+-ExpCharacterSelect
+-ExpKartSelect
+-ExpBattleKartSelect
+-ExpMultiKartSelect
+
+*/
+enum PulPageId {
+
+    PULPAGE_INITIAL = 0x100,
+    PULPAGE_CHOOSENEXT = PULPAGE_INITIAL,
+    PULPAGE_TEAMSELECT,
+    PULPAGE_KORACEEND,
+    PULPAGE_KOWINNER,
+    PULPAGE_FROOMKICK,
+    PULPAGE_SETTINGS,
+
+
+    PULPAGE_MAX = PULPAGE_SETTINGS - PULPAGE_INITIAL + 1
+};
+
+class ExpSection : public Section { //u32 id -> either a standard pageId but can also be a PulPageId
+public:
+    static ExpSection* GetSection() { return reinterpret_cast<ExpSection*>(SectionMgr::sInstance->curSection); }
+
+    static void CreatePages(ExpSection& self, SectionId id);
+    void CreatePulPages();
+    static void CreateAndInitPage(ExpSection& self, u32 id);
+    static void SetNextPage(u32 id, u32 animDirection);
+    static void DisposePulPages(SectionPad& pad, bool enablePointer);
+    static void AddPageLayer(ExpSection& self, u32 id);
+    static Page* AddPageLayerAnimatedReturnTopLayer(ExpSection& self, u32 id, u32 animDirection);
+
+
+    template<class T>
+    inline T* GetPulPage() const {
+        static_assert(is_base_of<Page, T>::value, "Not a Page");
+        return static_cast<T*>(this->pulPages[T::id - PULPAGE_INITIAL]);
+    }
+
+    template<class T>
+    inline T* GetPulPage(PulPageId id) const {
+        static_assert(is_base_of<Page, T>::value, "Not a Page");
+        return static_cast<T*>(this->pulPages[id - PULPAGE_INITIAL]);
+    }
+    inline void SetPulPage(Page* t, PulPageId id) { this->pulPages[id - PULPAGE_INITIAL] = t; }
+
+    Page* pulPages[PULPAGE_MAX];
+    bool hasAutoVote;
+};
+
+//Simple enum of BMGs, making any change much easier as everything is centralized here
+enum BMG {
+    //vanilla
+    BMG_PLEASE_WAIT_A_MOMENT = 0x401,
+    BMG_SAVED_GHOST = 0x45b,
+    BMG_FINISH = 0x4b5,
+    BMG_DISPLAY_TIME = 0x578,
+    BMG_TIME_TRIALS = 0xbb9,
+
+    BMG_GP_BOTTOM_TEXT = 0xd20,
+    BMG_GP_GOLD_TROPHY = 0xd2a,
+    BMG_GP_SILVER_TROPHY = 0xd2b,
+    BMG_GP_BRONZE_TROPHY = 0xd2c,
+    BMG_GP_RANK_3STARS = 0xd2d,
+    BMG_GP_RANK_2STARS = 0xd2e,
+    BMG_GP_RANK_1STAR = 0xd2f,
+    BMG_GP_RANK_A = 0xd30,
+    BMG_GP_RANK_B = 0xd31,
+    BMG_GP_RANK_C = 0xd32,
+    BMG_GP_RANK_D = 0xd33,
+    BMG_GP_RANK_E = 0xd34,
+    BMG_GP_RANK_F = 0xd35, //unused
+    BMG_GP_BLANK = 0xd36,
+
+    BMG_CHOOSE_GHOST_DATA = 0xd4f,
+    BMG_PLAY_GP = 0x100e,
+    BMG_PLAY_TEAM_GP = 0x100f,
+    BMG_RATING = 0x106a, //vr/br value + "rating" under
+    BMG_RACE_WITH11P = 0x10da,
+    BMG_BATTLE_WITH6P = 0x10db,
+    BMG_READY_TO_RACE = 0x1105,
+    BMG_CHALLENGE_GHOST = 0x177b,
+    BMG_WATCH_REPLAY = 0x177c,
+    BMG_NUMBER = 0x2044,
+    BMG_PERCENT_MENU = 0x2048,
+    BMG_REGCUPS = 0x23f0,
+    BMG_REGS = 0x2454,
+    BMG_BATTLE = 0x2498,
+    BMG_MII_NAME = 0x251d,
+    BMG_TIMER_DIFF_MINUS = 0x25b3,
+    BMG_TIMER_DIFF_PLUS = 0x25b4,
+
+    //race
+    BMG_INFO_DISPLAY = 0x2700,
+    BMG_TROPHY_EARNED = 0x2701,
+    BMG_GP_RACE = 0x2702,
+    BMG_CHOOSE_NEXT = 0x2703,
+    BMG_RANDOM_TRACK = 0x2704,
+    BMG_PERCENT_RACE = 0x2705,
+    BMG_NUMBER_RACE = 0x2706,
+
+    //Menu
+    BMG_TT_MODE_BUTTONS = 0x2800,
+    BMG_TT_MODE_BOTTOM_CUP = 0x2810,
+    BMG_TT_MODE_BOTTOM_SINGLE = 0x2820,
+    BMG_TT_BOTTOM_CUP_NOTROPHY = 0x282f,
+    BMG_TT_BOTTOM_CUP = 0x2830,
+
+    BMG_TT_BOTTOM_COURSE_NOTROPHY = 0x2831,
+    BMG_TT_BOTTOM_COURSE = 0x2832,
+
+
+    BMG_NO_TROPHY = 0x2833,
+    BMG_TROPHY = 0x2834,
+
+    BMG_FAV_GHOST = 0x2835,
+
+    BMG_SELECT_GHOST = 0x2840,
+    BMG_GHOST_SELECTED = 0x2841,
+    BMG_GHOST_SELECTED_COUNTER = 0x2842,
+    BMG_RANDOM_TROPHIES_MISSING = 0x2843,
+    BMG_RANDOM_CUP = 0x2844,
+    BMG_RANDOM_TROPHIES_MISSING_GCN = 0x2845,
+    BMG_RANDOM_ALL_TROPHIES_GCN = 0x2846,
+    BMG_DATE = 0x2847,
+    BMG_NINTENDO = 0x2848,
+    BMG_TEXT = 0x2849,
+    BMG_TEAM_SELECT = 0x284a,
+    BMG_ROOM_DENY = 0x284b,
+    BMG_TOO_MANY_DENIES = 0x284c,
+
+    //OTT
+    BMG_OTT_WW_BOTTOM = 0x2850,
+    BMG_OTT_BUTTON = 0x2851,
+    BMG_OTT_PLAYING = 0x2852,
+    BMG_OTT_TITLE_TEXT = 0x2853,
+    BMG_OTT_TIME_DIFF = 0x2854,
+    BMG_200 = 0x2855,
+
+    //KO
+    BMG_KO_OUT = 0x2860,
+    BMG_KO_WINNER = 0x2861,
+    //these 3 need to follow each other
+    BMG_KO_AVERAGE_PERCENT_TITLE = 0x2862,
+    BMG_KO_TIME_DANGER_TITLE = 0x2863,
+    BMG_KO_ALMOST_OUT_TITLE = 0x2864,
+
+    BMG_KO_ELIM_START_NONE = 0x2865,
+    BMG_KO_ELIM_START_SINGLE = 0x2866,
+    BMG_KO_ELIM_START_DOUBLE = 0x2867,
+    BMG_KO_ELIM_START_TRIPLE = 0x2868,
+    BMG_KO_ELIM_START_QUADRUPLE = 0x2869,
+    BMG_KO_RACEEND_SPECTATE = 0x286a,
+    BMG_KO_RACEEND_QUIT = 0x286b,
+    BMG_KO_TIE = 0x286c,
+
+    BMG_SETTINGSBUTTON_BOTTOM = 0x2901,
+    BMG_TEAMS_BOTTOM = 0x2910,
+    BMG_TEAMS_ENABLED = 0x2912,
+    BMG_TEAMS_DISABLED = 0x2913,
+
+    //froom
+    BMG_PLAY_OTT = 0x2914,
+    BMG_PLAY_KO = 0x2915,
+    BMG_PLAY_OTTKO = 0x2916,
+    BMG_PLAY_TEAM_OTT = 0x2917,
+    BMG_PLAY_TEAM_KO = 0x2918,
+    BMG_PLAY_TEAM_OTTKO = 0x2919,
+
+
+    BMG_CUPS = 0x10000,
+    BMG_TRACKS = 0x20000,
+    BMG_AUTHORS = 0x30000,
+
+    //ADD 0x50000 to all of these for YOUR settings, 0x52f01 = the button text etc...
+    BMG_SETTINGS_PAGE = 0x2f01,
+    BMG_SETTINGS_BOTTOM = 0x2f10,
+    BMG_SETTINGS_TITLE = 0x2f20,
+    BMG_RADIO_SETTINGS = 0x3000,
+    BMG_SCROLLER_SETTINGS = 0x3700,
+    BMG_USERSETTINGSOFFSET = 0x60000, //user settings therefore start at 0x53000 for radi osettings, 0x53700 for scrollers
+
+};
+
+const char controlFolder[] = "control";
+const char buttonFolder[] = "button";
+const char raceFolder[] = "game_image";
+const char bgFolder[] = "bg";
+
+}//namespace UI
+}//namespace Pulsar
+
+#endif
+
+ChangeCombo\ChangeCombo.cpp
+#include <core/nw4r/ut/Misc.hpp>
+#include <MarioKartWii/GlobalFunctions.hpp>
+#include <MarioKartWii/UI/Page/Other/SELECTStageMgr.hpp>
+#include <UI/ChangeCombo/ChangeCombo.hpp>
+#include <PulsarSystem.hpp>
+#include <Gamemodes/KO/KOMgr.hpp>
+#include <RetroRewind.hpp>
+#include <MarioKartWii/UI/Ctrl/Menu/CtrlMenuCharacterSelect.hpp>
+#include <MarioKartWii/UI/Page/Menu/CharacterSelect.hpp>
+#include <MarioKartWii/GlobalFunctions.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+kmWrite32(0x806508d4, 0x60000000); //Add VR screen outside of 1st race in frooms
+
+ExpVR::ExpVR() : comboButtonState(0) {
+    this->onRandomComboClick.subject = this;
+    this->onRandomComboClick.ptmf = &ExpVR::RandomizeComboVR;
+    this->onChangeComboClick.subject = this;
+    this->onChangeComboClick.ptmf = &ExpVR::ChangeCombo;
+}
+
+kmWrite32(0x8064a61c, 0x60000000); //nop initControlGroup
+
+kmWrite24(0x808998b3, 'PUL'); //WifiMemberConfirmButton -> PULiMemberConfirmButton
+void ExpVR::OnInit() {
+    this->InitControlGroup(0x11);
+    VR::OnInit();
+
+    const System* system = System::sInstance;
+    bool isKOd = false;
+    if(system->IsContext(PULSAR_MODE_KO) && system->koMgr->isSpectating) isKOd = true;
+    if(system->IsContext(PULSAR_MODE_OTT) && system->IsContext(PULSAR_CHANGECOMBO) == OTTSETTING_COMBO_ENABLED) isKOd = true;
+    if(System::sInstance->IsContext(PULSAR_MODE_OTT) && ((RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_VS_REGIONAL) || (RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_JOINING_REGIONAL))) isKOd = true;
+
+    this->AddControl(0xF, this->randomComboButton, 0);
+    this->randomComboButton.isHidden = isKOd;
+    this->randomComboButton.Load(UI::buttonFolder, "PULiMemberConfirmButton", "Random", 1, 0, isKOd);
+    this->randomComboButton.SetOnClickHandler(this->onRandomComboClick, 0);
+
+    this->AddControl(0x10, this->changeComboButton, 0);
+    this->changeComboButton.isHidden = isKOd;
+    this->changeComboButton.Load(UI::buttonFolder, "PULiMemberConfirmButton", "Change", 1, 0, isKOd);
+    this->changeComboButton.SetOnClickHandler(this->onChangeComboClick, 0);
+    this->changeComboButton.manipulator.SetAction(START_PRESS, this->changeComboButton.onClickHandlerObj, 0);
+
+    const Section* section = SectionMgr::sInstance->curSection;
+
+    Pages::SELECTStageMgr* selectStageMgr = section->Get<Pages::SELECTStageMgr>();
+    CountDown* timer = &selectStageMgr->countdown;
+
+    Pages::CharacterSelect* charPage = section->Get<Pages::CharacterSelect>();
+    charPage->timer = timer;
+    charPage->ctrlMenuCharSelect.timer = timer;
+
+    Pages::KartSelect* kartPage = section->Get<Pages::KartSelect>();
+    if(kartPage != nullptr) kartPage->timer = timer;
+
+    Pages::BattleKartSelect* kartBattlePage = section->Get<Pages::BattleKartSelect>();
+    if(kartBattlePage != nullptr) kartBattlePage->timer = timer;
+
+    Pages::MultiKartSelect* multiKartPage = section->Get<Pages::MultiKartSelect>();
+    if(multiKartPage != nullptr) multiKartPage->timer = timer;
+
+    Pages::DriftSelect* driftPage = section->Get<Pages::DriftSelect>();
+    if(driftPage != nullptr) driftPage->timer = timer;
+
+    Pages::MultiDriftSelect* multiDriftPage = section->Get<Pages::MultiDriftSelect>();
+    if(multiDriftPage != nullptr) {
+        multiDriftPage->nextSectionOnButtonClick = SECTION_NONE;
+        multiDriftPage->timer = timer;
+    }
+
+}
+
+static void RandomizeCombo() {
+    Random random;
+    const SectionMgr* sectionMgr = SectionMgr::sInstance;
+    bool charRestrictLight = Pulsar::CHAR_DEFAULTSELECTION;
+    bool charRestrictMid = Pulsar::CHAR_DEFAULTSELECTION;
+    bool charRestrictHeavy = Pulsar::CHAR_DEFAULTSELECTION;
+    bool kartRest = Pulsar::KART_DEFAULTSELECTION;
+    bool bikeRest = Pulsar::KART_DEFAULTSELECTION;
+    if (RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_HOST || RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_NONHOST) {
+        charRestrictLight = System::sInstance->IsContext(Pulsar::PULSAR_CHARRESTRICTLIGHT) ? Pulsar::CHAR_LIGHTONLY : Pulsar::CHAR_DEFAULTSELECTION;
+        charRestrictMid = System::sInstance->IsContext(Pulsar::PULSAR_CHARRESTRICTMID) ? Pulsar::CHAR_MEDIUMONLY : Pulsar::CHAR_DEFAULTSELECTION;
+        charRestrictHeavy = System::sInstance->IsContext(Pulsar::PULSAR_CHARRESTRICTHEAVY) ? Pulsar::CHAR_HEAVYONLY : Pulsar::CHAR_DEFAULTSELECTION;
+        kartRest = System::sInstance->IsContext(Pulsar::PULSAR_KARTRESTRICT) ? Pulsar::KART_KARTONLY : Pulsar::KART_DEFAULTSELECTION;
+        bikeRest = System::sInstance->IsContext(Pulsar::PULSAR_BIKERESTRICT) ? Pulsar::KART_BIKEONLY : Pulsar::KART_DEFAULTSELECTION;
+    }
+    const Section* section = sectionMgr->curSection;
+    SectionParams* sectionParams = sectionMgr->sectionParams;
+    for(int hudId = 0; hudId < sectionParams->localPlayerCount; ++hudId) {
+        CharacterId character = random.NextLimited<CharacterId>(24);
+        if (charRestrictLight == CHAR_LIGHTONLY) {
+            character = static_cast<CharacterId>(CtrlMenuCharacterSelect::buttonIdToCharacterId[static_cast<RetroRewind::System::CharButtonId>(random.NextLimited<u8>(8))]);
+        } if (charRestrictMid == CHAR_MEDIUMONLY) {
+            character = static_cast<CharacterId>(CtrlMenuCharacterSelect::buttonIdToCharacterId[static_cast<RetroRewind::System::CharButtonId>(random.NextLimited<u8>(8) + 8)]);
+        } if (charRestrictHeavy == CHAR_HEAVYONLY) {
+            character = static_cast<CharacterId>(CtrlMenuCharacterSelect::buttonIdToCharacterId[static_cast<RetroRewind::System::CharButtonId>(random.NextLimited<u8>(8) + 16)]);
+        }
+        u8 kartCount = 12;
+            if (kartRest == KART_KARTONLY) {
+                kartCount = 6; // Set options for kart only
+            } if (bikeRest == KART_BIKEONLY) {
+                kartCount = 6; // Set options for bike only
+            } 
+        const u32 randomizedKartPos = random.NextLimited(kartCount);
+        const KartId kart = kartsSortedByWeight[GetCharacterWeightClass(character)][randomizedKartPos];
+
+        sectionParams->characters[hudId] = character;
+        sectionParams->karts[hudId] = kart;
+        sectionParams->combos[hudId].selCharacter = character;
+        sectionParams->combos[hudId].selKart = kart;
+
+        ExpCharacterSelect* charSelect = section->Get<ExpCharacterSelect>(); //guaranteed to exist on this page
+        charSelect->randomizedCharIdx[hudId] = character;
+        charSelect->rolledCharIdx[hudId] = character;
+        charSelect->rouletteCounter = ExpVR::randomDuration;
+        charSelect->ctrlMenuCharSelect.selectedCharacter = character;
+        charSelect->controlsManipulatorManager.inaccessible = true;
+        ExpBattleKartSelect* battleKartSelect = section->Get<ExpBattleKartSelect>();
+        if(battleKartSelect != nullptr) {
+            battleKartSelect->selectedKart = random.NextLimited(2);
+            battleKartSelect->controlsManipulatorManager.inaccessible = true;
+        }
+
+        ExpKartSelect* kartSelect = section->Get<ExpKartSelect>();
+        if(kartSelect != nullptr) {
+            kartSelect->rouletteCounter = ExpVR::randomDuration;
+            kartSelect->randomizedKartPos = randomizedKartPos;
+            kartSelect->rolledKartPos = randomizedKartPos;
+            kartSelect->controlsManipulatorManager.inaccessible = true;
+        }
+
+        ExpMultiKartSelect* multiKartSelect = section->Get<ExpMultiKartSelect>();
+        if(multiKartSelect != nullptr) {
+            multiKartSelect->rouletteCounter = ExpVR::randomDuration;
+            multiKartSelect->rolledKartPos[0] = randomizedKartPos;
+            u32 options = 12;
+            if (kartRest == KART_KARTONLY) {
+                options = 6; // Set options for kart only
+            } if (bikeRest == KART_BIKEONLY) {
+                options = 6; // Set options for bike only
+            }   
+            if(IsBattle()) options = 2;
+            multiKartSelect->rolledKartPos[1] = random.NextLimited(options);
+            multiKartSelect->controlsManipulatorManager.inaccessible = true;
+        }
+    }
+}
+
+
+void ExpVR::RandomizeComboVR(PushButton& randomComboButton, u32 hudSlotId) {
+    this->comboButtonState = 1;
+    this->EndStateAnimated(0, randomComboButton.GetAnimationFrameSize());
+    RandomizeCombo();
+}
+
+void ExpVR::ChangeCombo(PushButton& changeComboButton, u32 hudSlotId) {
+    this->comboButtonState = 2;
+    this->EndStateAnimated(0, changeComboButton.GetAnimationFrameSize());
+}
+
+static void AddChangeComboPages(Section* section, PageId id) {
+    section->CreateAndInitPage(id);
+    section->CreateAndInitPage(PAGE_CHARACTER_SELECT);
+    bool isBattle = IsBattle();
+    PageId kartPage  = PAGE_KART_SELECT;
+    PageId driftPage = PAGE_DRIFT_SELECT;
+    if(SectionMgr::sInstance->sectionParams->localPlayerCount == 2) {
+        kartPage = PAGE_MULTIPLAYER_KART_SELECT;
+        driftPage = PAGE_MULTIPLAYER_DRIFT_SELECT;
+    }
+    else if(isBattle) kartPage = PAGE_BATTLE_KART_SELECT;
+    section->CreateAndInitPage(kartPage);
+    section->CreateAndInitPage(driftPage);
+}
+
+//58 59 5e 5f 60 61
+//P1
+kmCall(0x8062e09c, AddChangeComboPages); //0x58 can't do this more efficiently because supporting page 0x7F breaks kart images
+kmCall(0x8062e7e0, AddChangeComboPages); //0x60
+kmCall(0x8062e870, AddChangeComboPages); //0x61
+kmCall(0x8062e0e4, AddChangeComboPages); //0x59
+kmCall(0x8062e900, AddChangeComboPages); //0x62
+kmCall(0x8062e990, AddChangeComboPages); //0x63
+//P2
+kmCall(0x8062e708, AddChangeComboPages); //0x5e
+kmCall(0x8062e798, AddChangeComboPages); //0x5f
+kmCall(0x8062ea68, AddChangeComboPages); //0x64
+kmCall(0x8062eaf8, AddChangeComboPages); //0x65
+kmCall(0x8062eb88, AddChangeComboPages); //0x66
+kmCall(0x8062ec18, AddChangeComboPages); //0x67
+
+ExpCharacterSelect::ExpCharacterSelect() : rouletteCounter(-1) {
+    randomizedCharIdx[0] = CHARACTER_NONE;
+    randomizedCharIdx[1] = CHARACTER_NONE;
+    rolledCharIdx[0] = CHARACTER_NONE;
+    rolledCharIdx[1] = CHARACTER_NONE;
+}
+
+void ExpCharacterSelect::BeforeControlUpdate() {
+    //CtrlMenuCharacterSelect::ButtonDriver* array = this->ctrlMenuCharSelect.driverButtonsArray;
+    const s32 roulette = this->rouletteCounter;
+    bool charRestrictLight = Pulsar::CHAR_DEFAULTSELECTION;
+    bool charRestrictMid = Pulsar::CHAR_DEFAULTSELECTION;
+    bool charRestrictHeavy = Pulsar::CHAR_DEFAULTSELECTION;
+    if (RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_HOST || RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_NONHOST) {
+        charRestrictLight = System::sInstance->IsContext(Pulsar::PULSAR_CHARRESTRICTLIGHT) ? Pulsar::CHAR_LIGHTONLY : Pulsar::CHAR_DEFAULTSELECTION;
+        charRestrictMid = System::sInstance->IsContext(Pulsar::PULSAR_CHARRESTRICTMID) ? Pulsar::CHAR_MEDIUMONLY : Pulsar::CHAR_DEFAULTSELECTION;
+        charRestrictHeavy = System::sInstance->IsContext(Pulsar::PULSAR_CHARRESTRICTHEAVY) ? Pulsar::CHAR_HEAVYONLY : Pulsar::CHAR_DEFAULTSELECTION;
+    }
+    if(roulette > 0) {
+        --this->rouletteCounter;
+        this->controlsManipulatorManager.inaccessible = true;
+    }
+    for(int hudId = 0; hudId < SectionMgr::sInstance->sectionParams->localPlayerCount; ++hudId) {
+        CharacterId prevChar = this->rolledCharIdx[hudId];
+        Random random;
+        const bool isGoodFrame = roulette % 4 == 1;
+        if(roulette == 1) this->rolledCharIdx[hudId] = this->randomizedCharIdx[hudId];
+        else if(isGoodFrame) while(this->rolledCharIdx[hudId] == prevChar) {
+            this->rolledCharIdx[hudId] = static_cast<CharacterId>(random.NextLimited(24));
+        if (charRestrictLight == CHAR_LIGHTONLY) {
+            this->rolledCharIdx[hudId] = static_cast<CharacterId>(CtrlMenuCharacterSelect::buttonIdToCharacterId[static_cast<RetroRewind::System::CharButtonId>(random.NextLimited<u8>(8))]);
+        } if (charRestrictMid == CHAR_MEDIUMONLY) {
+            this->rolledCharIdx[hudId] = static_cast<CharacterId>(CtrlMenuCharacterSelect::buttonIdToCharacterId[static_cast<RetroRewind::System::CharButtonId>(random.NextLimited<u8>(8) + 8)]);
+        } if (charRestrictHeavy == CHAR_HEAVYONLY) {
+            this->rolledCharIdx[hudId] = static_cast<CharacterId>(CtrlMenuCharacterSelect::buttonIdToCharacterId[static_cast<RetroRewind::System::CharButtonId>(random.NextLimited<u8>(8) + 16)]);
+        }
+        }
+        if(isGoodFrame) {
+            this->ctrlMenuCharSelect.GetButtonDriver(prevChar)->HandleDeselect(hudId, -1);
+            CtrlMenuCharacterSelect::ButtonDriver* nextButton = this->ctrlMenuCharSelect.GetButtonDriver(rolledCharIdx[hudId]);
+            nextButton->HandleSelect(hudId, -1);
+            nextButton->Select(0);
+            //array[prevChar].HandleDeselect(0, -1);
+            //array[this->rolledCharIdx].HandleSelect(0, -1);
+
+        }
+        else if(roulette == 0) this->ctrlMenuCharSelect.GetButtonDriver(randomizedCharIdx[hudId])->HandleClick(hudId, -1);
+    }
+
+    //array[this->randomizedCharIdx].HandleClick(0, -1);
+}
+//store correct buttons in sectionParams
+
+ExpBattleKartSelect::ExpBattleKartSelect() :selectedKart(-1) {}
+
+void ExpBattleKartSelect::BeforeControlUpdate() {
+
+    const s32 kart = this->selectedKart;
+    if(kart >= 0 && this->currentState == 0x4) {
+        this->controlsManipulatorManager.inaccessible = true;
+        this->selectedKart = -1;
+        PushButton* otherButton = this->controlGroup.GetControl<PushButton>(kart ^ 1);
+        PushButton* kartButton = this->controlGroup.GetControl<PushButton>(kart);
+        otherButton->HandleDeselect(0, -1);
+        kartButton->HandleSelect(0, -1);
+        kartButton->Select(0);
+        kartButton->HandleClick(0, -1);
+    }
+}
+
+ExpKartSelect::ExpKartSelect() : randomizedKartPos(-1), rolledKartPos(-1), rouletteCounter(-1) {}
+
+void ExpKartSelect::BeforeControlUpdate() {
+    s32 roulette = this->rouletteCounter;
+    bool kartRest = Pulsar::KART_DEFAULTSELECTION;
+    bool bikeRest = Pulsar::KART_DEFAULTSELECTION;
+    if (RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_HOST || RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_NONHOST) {
+        kartRest = System::sInstance->IsContext(Pulsar::PULSAR_KARTRESTRICT) ? Pulsar::KART_KARTONLY : Pulsar::KART_DEFAULTSELECTION;
+        bikeRest = System::sInstance->IsContext(Pulsar::PULSAR_BIKERESTRICT) ? Pulsar::KART_BIKEONLY : Pulsar::KART_DEFAULTSELECTION;
+    }
+    if(roulette > 0) {
+        this->controlsManipulatorManager.inaccessible = true;
+        Random random;
+        const u32 prevRoll = this->rolledKartPos;
+        ButtonMachine* prevButton = this->GetKartButton(prevRoll);
+        prevButton->HandleDeselect(0, -1);
+
+        u32 nextRoll = prevRoll;
+        const bool isGoodFrame = roulette % 4 == 1;
+        u8 kartCount = 12;
+            if (kartRest == KART_KARTONLY) {
+                kartCount = 6; // Set options for kart only
+            } if (bikeRest == KART_BIKEONLY) {
+                kartCount = 6; // Set options for bike only
+            } 
+        if(roulette == 1) nextRoll = this->randomizedKartPos;
+        else if(isGoodFrame) while(nextRoll == prevRoll) nextRoll = random.NextLimited(kartCount);
+        if(isGoodFrame) {
+            ButtonMachine* nextButton = this->GetKartButton(nextRoll);
+            nextButton->HandleSelect(0, -1);
+            nextButton->Select(0);
+            this->rolledKartPos = nextRoll;
+        }
+        this->rouletteCounter--;
+    }
+    else if(roulette == 0) {
+        this->rouletteCounter = -1;
+        this->GetKartButton(this->randomizedKartPos)->HandleClick(0, -1);
+    }
+
+}
+
+ButtonMachine* ExpKartSelect::GetKartButton(u32 idx) const {
+    bool kartRest = Pulsar::KART_DEFAULTSELECTION;
+    bool bikeRest = Pulsar::KART_DEFAULTSELECTION;
+    if (RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_HOST || RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_NONHOST) {
+        kartRest = System::sInstance->IsContext(Pulsar::PULSAR_KARTRESTRICT) ? Pulsar::KART_KARTONLY : Pulsar::KART_DEFAULTSELECTION;
+        bikeRest = System::sInstance->IsContext(Pulsar::PULSAR_BIKERESTRICT) ? Pulsar::KART_BIKEONLY : Pulsar::KART_DEFAULTSELECTION;
+    }
+    u8 buttonsPerRow = 2;
+            if (kartRest == KART_KARTONLY) {
+                buttonsPerRow = 1; // Set options for kart only
+            } if (bikeRest == KART_BIKEONLY) {
+                buttonsPerRow = 1; // Set options for bike only
+            } 
+    const UIControl* globalButtonHolder = this->controlGroup.GetControl(buttonsPerRow); //holds the 6 controls (6 rows) that each hold a pair of buttons
+    return globalButtonHolder->childrenGroup.GetControl(idx / buttonsPerRow)->childrenGroup.GetControl<ButtonMachine>(idx % buttonsPerRow);
+}
+
+ExpMultiKartSelect::ExpMultiKartSelect() : rouletteCounter(-1) {
+    rolledKartPos[0] = -1;
+    rolledKartPos[1] = -1;
+}
+
+void ExpMultiKartSelect::BeforeControlUpdate() {
+    Random random;
+    const s32 roulette = this->rouletteCounter;
+    if(roulette > 0) {
+        this->rouletteCounter--;
+        this->controlsManipulatorManager.inaccessible = true;
+    }
+    for(int hudId = 0; hudId < SectionMgr::sInstance->sectionParams->localPlayerCount; ++hudId) { //in all likelihood always 2
+        if(roulette == ExpVR::randomDuration) this->arrows[hudId].SelectInitial(this->rolledKartPos[hudId]);
+        if(roulette > 8) {
+            const bool isGoodFrame = roulette % 4 == 1;
+            if(isGoodFrame) {
+                if(random.NextLimited(2) == 0) this->arrows[hudId].HandleRightPress(hudId, -1);
+                else this->arrows[hudId].HandleLeftPress(hudId, 0);
+            }
+        }
+        else if(roulette == 0) this->arrows[hudId].HandleClick(hudId, -1);
+    }
+
+}
+
+void DriftSelectBeforeControlUpdate(Pages::DriftSelect* driftSelect) {
+    ExpCharacterSelect* charSelect = SectionMgr::sInstance->curSection->Get<ExpCharacterSelect>();
+    if(charSelect->rouletteCounter != -1 && driftSelect->currentState == 0x4) {
+        driftSelect->controlsManipulatorManager.inaccessible = true;
+        PushButton* autoButton = driftSelect->controlGroup.GetControl<PushButton>(1);
+        PushButton* manualButton = driftSelect->controlGroup.GetControl<PushButton>(0);
+        autoButton->HandleDeselect(0, -1);
+        manualButton->HandleSelect(0, -1);
+        manualButton->Select(0);
+        manualButton->HandleClick(0, -1);
+        charSelect->rouletteCounter = -1;
+    }
+}
+kmWritePointer(0x808D9DF8, DriftSelectBeforeControlUpdate);
+
+void MultiDriftSelectBeforeControlUpdate(Pages::MultiDriftSelect* multiDriftSelect) {
+
+    SectionMgr* sectionMgr = SectionMgr::sInstance;
+    ExpCharacterSelect* charSelect = sectionMgr->curSection->Get<ExpCharacterSelect>();
+    if(charSelect->rouletteCounter != -1 && multiDriftSelect->currentState == 0x4) {
+        multiDriftSelect->controlsManipulatorManager.inaccessible = true;
+        for(int i = 0; i < sectionMgr->sectionParams->localPlayerCount; ++i) {
+            PushButton* autoButton = multiDriftSelect->externControls[0 + 2 * i];
+            PushButton* manualButton = multiDriftSelect->externControls[1 + 2 * i];
+            autoButton->HandleDeselect(i, -1);
+            manualButton->HandleSelect(i, -1);
+            manualButton->Select(i);
+            manualButton->HandleClick(i, -1);
+        }
+        charSelect->rouletteCounter = -1;
+    }
+}
+kmWritePointer(0x808D9C10, MultiDriftSelectBeforeControlUpdate);
+
+void AddCharSelectLayer(Pages::SELECTStageMgr& page, PageId id, u32 animDirection) {
+
+    const System* system = System::sInstance;
+    const ExpVR* votingPage = SectionMgr::sInstance->curSection->Get<ExpVR>(); //always present when 0x90 is present
+    if(system->IsContext(PULSAR_MODE_KO) && system->koMgr->isSpectating) {
+        id = PAGE_VOTE;
+        page.status = Pages::SELECTStageMgr::STATUS_VOTES_PAGE;
+    }
+    else if(votingPage->comboButtonState != 0) id = PAGE_CHARACTER_SELECT;
+    page.AddPageLayer(id, animDirection);
+}
+kmCall(0x806509d0, AddCharSelectLayer);
+
+asmFunc LoadCorrectPageAfterDrift() { //r0 has gamemode
+    ASM(
+        nofralloc;
+    cmpwi r0, MODE_PUBLIC_BATTLE;
+    beq - isBattle;
+    cmpwi r0, MODE_PRIVATE_BATTLE;
+    bne + end;
+isBattle:
+    li r0, 3;
+end:
+    cmpwi r0, 3;
+    blr;
+        )
+}
+kmCall(0x8084e670, LoadCorrectPageAfterDrift);
+
+
+
+}//namespace UI
+}//namespace Pulsar
+
+
+ChangeCombo\ChangeCombo.hpp
+#ifndef _PULCHANGECOMBO_
+#define _PULCHANGECOMBO_
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Page/Menu/CharacterSelect.hpp>
+#include <MarioKartWii/UI/Page/Menu/KartSelect.hpp>
+#include <MarioKartWii/UI/Page/Menu/MultiKartSelect.hpp>
+#include <MarioKartWii/UI/Page/Menu/BattleKartSelect.hpp>
+#include <MarioKartWii/UI/Page/Menu/DriftSelect.hpp>
+#include <MarioKartWii/UI/Page/Menu/MultiDriftSelect.hpp>
+#include <MarioKartWii/UI/Page/Other/VR.hpp>
+#include <UI/UI.hpp>
+
+/*Implements a custom version of the well known "change combo btw race":
+-Extends the VR page and adds 2 buttons, one to randomize and the other to manually change
+-The randomize button visually selects buttons at random before settling on a character (or a vehicle). The drift will always be manual
+-The change button simply leads to the character select screen
+*/
+
+namespace Pulsar {
+namespace UI {
+static void RandomizeCombo();
+class ExpVR : public Pages::VR {
+public:
+    static const int randomDuration = 60; //1s
+    static_assert(randomDuration % 4 == 0, "Random Combo Duration");
+    ExpVR();
+    void OnInit() override;
+private:
+    void RandomizeComboVR(PushButton& button, u32 hudSlotId);
+    void ChangeCombo(PushButton& button, u32 hudSlotId);
+    PtmfHolder_2A<ExpVR, void, PushButton&, u32> onRandomComboClick; //0x192c
+    PtmfHolder_2A<ExpVR, void, PushButton&, u32> onChangeComboClick;
+    PushButton randomComboButton;
+    PushButton changeComboButton;
+public:
+    u8 comboButtonState; //1 = randomize, 2 = change
+};
+
+class ExpCharacterSelect : public Pages::CharacterSelect {
+public:
+    ExpCharacterSelect();
+    void BeforeControlUpdate() override;
+    void OnStartPress(u32 hudSlotId) override {
+        if(hudSlotId == 0) RandomizeCombo();
+    }
+    CharacterId randomizedCharIdx[2];
+    CharacterId rolledCharIdx[2];
+    s32 rouletteCounter;
+
+};
+
+class ExpBattleKartSelect : public Pages::BattleKartSelect {
+public:
+    ExpBattleKartSelect();
+    void BeforeControlUpdate() override;
+    s32 selectedKart; //0 kart 1 bike
+};
+
+class ExpKartSelect : public Pages::KartSelect {
+public:
+    ExpKartSelect();
+    void BeforeControlUpdate() override;
+    ButtonMachine* GetKartButton(u32 idx) const;
+    u32 randomizedKartPos; //from 0 to 11
+    s32 rouletteCounter;
+    u32 rolledKartPos; //from 0 to 11
+};
+
+class ExpMultiKartSelect : public Pages::MultiKartSelect {
+public:
+    ExpMultiKartSelect();
+    void BeforeControlUpdate() override;
+    s32 rouletteCounter;
+    u32 rolledKartPos[2]; //from 0 to 11
+};
+
+}//namespace UI
+}//namespace Pulsar
+#endif
+
+CtrlRaceBase\CustomCtrlRaceBase.cpp
+#include <UI/CtrlRaceBase/CustomCtrlRaceBase.hpp>
+
+namespace Pulsar {
+namespace UI {
+CustomCtrlBuilder* CustomCtrlBuilder::sHooks = nullptr;
+void CustomCtrlBuilder::BuildCustomRaceCtrls(Pages::RaceHUD& racePage, u32 baseControlCount)
+{
+    u32 count = 0;
+    for(CustomCtrlBuilder* p = sHooks; p; p = p->next) {
+        p->ctrlCount = p->countCtrls();
+        count += p->ctrlCount;
+    }
+    racePage.InitControlGroup(baseControlCount + count);
+    u32 index = baseControlCount;
+    for(CustomCtrlBuilder* p = sHooks; p; p = p->next) {
+        if(p->ctrlCount != 0) {
+            u32 initialIdx = index;
+            index += p->ctrlCount;
+            p->createCtrls(racePage, initialIdx, p->ctrlCount);
+        }
+    }
+}
+kmCall(0x808562d0, CustomCtrlBuilder::BuildCustomRaceCtrls);
+}//namespace UI
+}//namespace Pulsar
+
+CtrlRaceBase\CustomCtrlRaceBase.hpp
+#ifndef _PULCTRLRACEBASE_
+#define _PULCTRLRACEBASE_
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Page/RaceHUD/RaceHUD.hpp>
+#include <UI/UI.hpp>
+
+//A builder to create any kind of ctrlracebase by registering a count and a create function
+namespace Pulsar {
+namespace UI {
+
+class CustomCtrlBuilder {
+    typedef u32(CountFunc)();
+    typedef void (CreateFunc)(Page& page, u32 initialIdx, u32);
+public:
+    static void BuildCustomRaceCtrls(Pages::RaceHUD& racePage, u32 count);
+    CustomCtrlBuilder(CountFunc& count, CreateFunc& create)
+        : countCtrls(count), createCtrls(create), next(sHooks) {
+        sHooks = this;
+    }
+private:
+    CountFunc& countCtrls;
+    u32 ctrlCount;
+    CreateFunc& createCtrls;
+    CustomCtrlBuilder* next;
+    static CustomCtrlBuilder* sHooks;
+};
+
+}//namespace UI
+}//namespace Pulsar
+
+#endif
+
+CtrlRaceBase\InfoDisplay.cpp
+#include <PulsarSystem.hpp>
+#include <UI/CtrlRaceBase/InfoDisplay.hpp>
+#include <SlotExpansion/UI/ExpansionUIMisc.hpp>
+#include <SlotExpansion/CupsConfig.hpp>
+
+
+namespace Pulsar {
+namespace UI {
+//So that it is only done once in TTs
+u32 CtrlRaceTrackInfoDisplay::lastCourse = -1;
+
+u32 CtrlRaceTrackInfoDisplay::Count() {
+    const u32 gamemode = Racedata::sInstance->racesScenario.settings.gamemode;
+    if((gamemode == MODE_GRAND_PRIX) || (gamemode == MODE_VS_RACE) || (gamemode == MODE_PUBLIC_VS) || (gamemode == MODE_PRIVATE_VS)) return 1;
+    const PulsarId winning = CupsConfig::sInstance->GetWinning();
+    if(gamemode == MODE_TIME_TRIAL && winning != lastCourse) {
+        lastCourse = winning;
+        return 1;
+    }
+    return 0;
+}
+void CtrlRaceTrackInfoDisplay::Create(Page& page, u32 index, u32) {
+    CtrlRaceTrackInfoDisplay* info = new(CtrlRaceTrackInfoDisplay);
+    page.AddControl(index, *info, 0);
+    info->Load();
+}
+static CustomCtrlBuilder INFODISPLAYPANEL(CtrlRaceTrackInfoDisplay::Count, CtrlRaceTrackInfoDisplay::Create);
+
+
+void CtrlRaceTrackInfoDisplay::Load() {
+    this->hudSlotId = 0;
+
+    ControlLoader loader(this);
+    loader.Load("game_image", "CTInfo", "CTInfo", nullptr);
+    this->textBox_00 = this->layout.GetPaneByName("TextBox_00");
+    const u32 bmgId = GetCurTrackBMG();
+    Text::Info info;
+    info.bmgToPass[0] = bmgId;
+    u32 authorId = BMG_NINTENDO;
+    if(bmgId >= BMG_TRACKS) authorId = bmgId + BMG_AUTHORS - BMG_TRACKS;
+    info.bmgToPass[1] = authorId;
+    this->SetMessage(BMG_INFO_DISPLAY, &info);
+}
+
+}//namespace UI
+}//namespace Pulsar
+
+
+CtrlRaceBase\InfoDisplay.hpp
+#ifndef _PULINFODISPLAY_
+#define _PULINFODISPLAY_
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Ctrl/CtrlRace/CtrlRaceWifi.hpp>
+#include <UI/CtrlRaceBase/CustomCtrlRaceBase.hpp>
+
+//Displays the track name and its author when a race starts, but only once in TTs (until leaving the current track)
+namespace Pulsar {
+namespace UI {
+class CtrlRaceTrackInfoDisplay : public CtrlRaceWifiStartMessage {
+public:
+    static u32 Count();
+    static void Create(Page& page, u32 index, u32);
+private:
+    void Load();
+    static u32 lastCourse;
+};
+}//namespace UI
+}//namespace Pulsar
+
+#endif
+
+CtrlRaceBase\InputViewer.cpp
+#include <MarioKartWii/Kart/KartManager.hpp>
+#include <UI/CtrlRaceBase/InputViewer.hpp>
+#include <Settings/Settings.hpp>
+#include <RetroRewind.hpp>
+#include <MarioKartWii/Race/RaceInfo/RaceInfo.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+const s8 CtrlRaceInputViewer::DPAD_HOLD_FOR_N_FRAMES = 10;
+
+void CtrlRaceInputViewer::Init() {
+    char name[32];
+    bool isBrakedriftToggled = System::sInstance->IsContext(PULSAR_200);
+    RacedataScenario& raceScenario = Racedata::sInstance->racesScenario;
+    
+    for (int i = 0; i < (int)DpadState_Count; ++i) {
+        DpadState state = static_cast<DpadState>(i);
+        const char* stateName = CtrlRaceInputViewer::DpadStateToName(state);
+        
+        snprintf(name, 32, "Dpad%.*s", strlen(stateName), stateName);
+        nw4r::lyt::Pane* pane = this->layout.GetPaneByName(name);
+        this->SetPaneVisibility(name, state == DpadState_Off);
+        this->m_dpadPanes[i] = pane;
+        
+        this->HudSlotColorEnable(name, true);
+    }
+    
+    for (int i = 0; i < (int)AccelState_Count; ++i) {
+        AccelState state = static_cast<AccelState>(i);
+        const char* stateName = CtrlRaceInputViewer::AccelStateToName(state);
+        
+        snprintf(name, 32, "Accel%.*s", strlen(stateName), stateName);
+        nw4r::lyt::Pane* pane = this->layout.GetPaneByName(name);
+        this->SetPaneVisibility(name, state == AccelState_Off);
+        if (isBrakedriftToggled) {
+            pane->trans.x += pane->scale.x * 15.0f;
+            pane->trans.y += pane->scale.z * 15.0f;
+        }
+        this->m_accelPanes[i] = pane;
+        
+        this->HudSlotColorEnable(name, true);
+    }
+    
+    for (int i = 0; i < (int)Trigger_Count; ++i) {
+        Trigger trigger = static_cast<Trigger>(i);
+        const char* triggerName = CtrlRaceInputViewer::TriggerToName(trigger);
+        
+        for (int j = 0; j < (int)TriggerState_Count; ++j) {
+            TriggerState state = static_cast<TriggerState>(j);
+            const char* stateName = CtrlRaceInputViewer::TriggerStateToName(state);
+            
+            snprintf(name, 32, "Trigger%.*s%.*s", strlen(triggerName), triggerName, strlen(stateName), stateName);
+            nw4r::lyt::Pane* pane = this->layout.GetPaneByName(name);
+            this->SetPaneVisibility(name, state == TriggerState_Off);
+            if (!isBrakedriftToggled && trigger == Trigger_BD) {
+                this->SetPaneVisibility(name, false);
+            }
+            this->m_triggerPanes[i][j] = pane;
+            
+            this->HudSlotColorEnable(name, true);
+        }
+    }
+    
+    this->m_stickPane = this->layout.GetPaneByName("Stick");
+    this->m_stickOrigin = this->m_stickPane->trans;
+    this->m_playerId = this->GetPlayerId();
+    this->HudSlotColorEnable("Stick", true);
+    this->HudSlotColorEnable("StickBackdrop", true);
+
+    LayoutUIControl::Init();
+}
+
+void CtrlRaceInputViewer::OnUpdate() {
+    this->UpdatePausePosition();
+
+    u8 playerId = this->GetPlayerId();
+    if (playerId != m_playerId) {
+        m_dpadTimer = 0;
+        m_playerId = playerId;
+    }
+
+    RacedataScenario& raceScenario = Racedata::sInstance->racesScenario;
+    if (playerId < raceScenario.playerCount) {
+        RaceinfoPlayer* player = Raceinfo::sInstance->players[playerId];
+        if (player) {
+            Input::State* input = &player->realControllerHolder->inputStates[0];
+
+            DpadState dpadState = (DpadState)input->motionControlFlick;
+            Vec2 stick = input->stick;
+
+            // Check mirror mode
+            if (raceScenario.settings.modeFlags & 1) {
+                stick.x = -stick.x;
+
+                if (input->motionControlFlick == DpadState_Left) {
+                    dpadState = DpadState_Right;
+                } else if (input->motionControlFlick == DpadState_Right) {
+                    dpadState = DpadState_Left;
+                }
+            }
+            
+            bool accel = input->buttonActions & 0x1;
+            bool L = input->buttonActions & 0x4;
+            bool R = (input->buttonActions & 0x8) || (input->buttonActions & 0x2);
+
+            setDpad(dpadState);
+            setAccel(accel ? AccelState_Pressed : AccelState_Off);
+
+            setTrigger(Trigger_L, L ? TriggerState_Pressed : TriggerState_Off);
+            setTrigger(Trigger_R, R ? TriggerState_Pressed : TriggerState_Off);
+            setStick(stick);
+
+            bool isBrakedriftToggled = System::sInstance->IsContext(PULSAR_200) || RetroRewind::System::Is500cc();
+            if (isBrakedriftToggled) {
+                bool BD = input->buttonActions & 0x2;
+                setTrigger(Trigger_BD, BD ? TriggerState_Pressed : TriggerState_Off);
+            }
+        }
+    }
+}
+
+u32 CtrlRaceInputViewer::Count() {
+    if(static_cast<Pulsar::InputDisplay>(Pulsar::Settings::Mgr::Get().GetUserSettingValue(static_cast<Pulsar::Settings::UserType>(Pulsar::Settings::SETTINGSTYPE_RR2), Pulsar::SETTINGRR2_RADIO_INPUTDISPLAY)) == Pulsar::INPUTDISPLAY_ENABLED) {
+        const RacedataScenario& scenario = Racedata::sInstance->racesScenario;
+        u32 localPlayerCount = scenario.localPlayerCount;
+        const SectionId sectionId = SectionMgr::sInstance->curSection->sectionId;
+        if(sectionId >= SECTION_WATCH_GHOST_FROM_CHANNEL && sectionId <= SECTION_WATCH_GHOST_FROM_MENU) localPlayerCount += 1;
+        if(localPlayerCount == 0 && (scenario.settings.gametype & GAMETYPE_ONLINE_SPECTATOR)) localPlayerCount = 1;
+        return localPlayerCount;
+    }
+    return 0;
+}
+
+void CtrlRaceInputViewer::Create(Page& page, u32 index, u32 count) {
+    u8 variantId = (count == 3) ? 4 : count;
+    for(int i = 0; i < count; ++i) {
+        CtrlRaceInputViewer* inputViewer = new CtrlRaceInputViewer;
+        page.AddControl(index + i, *inputViewer, 0);
+
+        char variant[0x20];
+        int pos = i;
+        snprintf(variant, 0x20, "InputDisplay_%u_%u", variantId, pos);
+
+        inputViewer->Load(variant, i);
+    }
+}
+
+static CustomCtrlBuilder INPUTVIEWER(CtrlRaceInputViewer::Count, CtrlRaceInputViewer::Create);
+
+void CtrlRaceInputViewer::Load(const char* variant, u8 id) {
+    this->hudSlotId = id;
+    ControlLoader loader(this);
+    const char* groups[] = { nullptr, nullptr };
+    loader.Load(UI::raceFolder, "PULInputViewer", variant, groups);
+}
+
+void CtrlRaceInputViewer::setDpad(DpadState state) {
+    if (state == m_dpadState) {
+        return;
+    }
+
+    // Only hold for off press
+    if (state == DpadState_Off && m_dpadTimer != 0 && --m_dpadTimer) {
+        return;
+    }
+
+    m_dpadPanes[static_cast<u32>(m_dpadState)]->flag &= ~1;
+    m_dpadPanes[static_cast<u32>(state)]->flag |= 1;
+    m_dpadState = state;
+    m_dpadTimer = DPAD_HOLD_FOR_N_FRAMES;
+}
+
+void CtrlRaceInputViewer::setAccel(AccelState state) {
+    if (state == m_accelState) {
+        return;
+    }
+
+    m_accelPanes[static_cast<u32>(m_accelState)]->flag &= ~1;
+    m_accelPanes[static_cast<u32>(state)]->flag |= 1;
+    m_accelState = state;
+}
+
+void CtrlRaceInputViewer::setTrigger(Trigger trigger, TriggerState state) {
+    u32 t = static_cast<u32>(trigger);
+    if (state == m_triggerStates[t]) {
+        return;
+    }
+
+    m_triggerPanes[t][static_cast<u32>(m_triggerStates[t])]->flag &= ~1;
+    m_triggerPanes[t][static_cast<u32>(state)]->flag |= 1;
+    m_triggerStates[t] = state;
+}
+
+void CtrlRaceInputViewer::setStick(Vec2 state) {
+    if (state.x == m_stickState.x && state.z == m_stickState.z) {
+        return;
+    }
+
+    // Map range [-1, 1] -> [-width * 5 / 19, width * 5 / 19]
+    f32 scale = 5.0f / 19.0f;
+    m_stickPane->trans.x =
+            m_stickOrigin.x + scale * state.x * m_stickPane->scale.x * m_stickPane->size.x;
+    m_stickPane->trans.y =
+            m_stickOrigin.y + scale * state.z * m_stickPane->scale.z * m_stickPane->size.z;
+
+    m_stickState = state;
+}
+
+} // namespace UI
+} // namespace Pulsar
+
+CtrlRaceBase\InputViewer.hpp
+#ifndef _PULINPUTVIEWER_
+#define _PULINPUTVIEWER_
+#include <kamek.hpp>
+#include <UI/CtrlRaceBase/CustomCtrlRaceBase.hpp>
+
+// Displays the Input Viewer
+namespace Pulsar {
+namespace UI {
+class CtrlRaceInputViewer : public CtrlRaceBase {
+
+    enum DpadState {
+        DpadState_Off,
+        DpadState_Up,
+        DpadState_Down,
+        DpadState_Left,
+        DpadState_Right,
+        DpadState_Count // Invalid 
+    };
+
+    enum AccelState {
+        AccelState_Off,
+        AccelState_Pressed,
+        AccelState_Count // Invalid 
+    };
+
+    enum Trigger {
+        Trigger_L,
+        Trigger_R,
+        Trigger_BD, // Brake drift
+        Trigger_Count // Invalid 
+    };
+
+    enum TriggerState {
+        TriggerState_Off,
+        TriggerState_Pressed,
+        TriggerState_Count // Invalid 
+    };
+
+public:
+    CtrlRaceInputViewer() {
+        m_dpadState = DpadState_Off;
+        m_dpadTimer = 0;
+        m_accelState = AccelState_Off;
+        m_triggerStates[Trigger_L] = TriggerState_Off;
+        m_triggerStates[Trigger_R] = TriggerState_Off;
+        m_triggerStates[Trigger_BD] = TriggerState_Off;
+        m_stickState = Vec2(0.0f, 0.0f);
+    }
+
+    void Init() override;
+    void OnUpdate() override;
+
+    static u32 Count();
+    static void Create(Page& page, u32 index, u32 count);
+
+private:
+    void Load(const char* variant, u8 id);
+
+    void setDpad(DpadState state);
+    void setAccel(AccelState state);
+    void setTrigger(Trigger trigger, TriggerState state);
+    void setStick(Vec2 state);
+
+private:
+    nw4r::lyt::Pane* m_dpadPanes[(int)DpadState_Count];
+    nw4r::lyt::Pane* m_accelPanes[(int)AccelState_Count];
+    nw4r::lyt::Pane* m_triggerPanes[(int)Trigger_Count][(int)TriggerState_Count];
+    nw4r::lyt::Pane *m_stickPane;
+    nw4r::math::VEC3 m_stickOrigin;
+
+    DpadState m_dpadState;
+    s8 m_dpadTimer; // Hold the DPAD press for DPAD_HOLD_FOR_N_FRAMES frames (?????)
+    AccelState m_accelState;
+    TriggerState m_triggerStates[(int)Trigger_Count];
+    Vec2 m_stickState;
+
+    u32 m_playerId;
+
+    static const s8 DPAD_HOLD_FOR_N_FRAMES;
+
+private:
+    static const char* DpadStateToName(DpadState state) {
+        switch (state) {
+        case DpadState_Up: return "Up";
+        case DpadState_Down: return "Down";
+        case DpadState_Left: return "Left";
+        case DpadState_Right: return "Right";
+        default: return "Off";
+        }
+    }
+
+    static const char* AccelStateToName(AccelState state) {
+        switch (state) {
+        case AccelState_Pressed: return "Pressed";
+        default: return "Off";
+        }
+    }
+
+    static const char* TriggerToName(Trigger trigger) {
+        switch (trigger) {
+        case Trigger_L: return "L";
+        case Trigger_R: return "R";
+        case Trigger_BD: return "BD";
+        default: return "Off";
+        }
+    }
+
+    static const char* TriggerStateToName(TriggerState state) {
+        switch (state) {
+        case TriggerState_Pressed: return "Pressed";
+        default: return "Off";
+        }
+    }
+
+};
+}//namespace UI
+}//namespace Pulsar
+
+#endif
+
+CtrlRaceBase\Speedometer.cpp
+#include <MarioKartWii/Kart/KartManager.hpp>
+#include <UI/CtrlRaceBase/Speedometer.hpp>
+#include <Settings/Settings.hpp>
+
+namespace Pulsar {
+namespace UI {
+u32 CtrlRaceSpeedo::Count() {
+    if(Settings::Mgr::Get().GetSettingValue(Settings::SETTINGSTYPE_RACE, SETTINGRACE_RADIO_SOM) == RACESETTING_SOM_DISABLED) return 0;
+    const RacedataScenario& scenario = Racedata::sInstance->racesScenario;
+    u32 localPlayerCount = scenario.localPlayerCount;
+    const SectionId sectionId = SectionMgr::sInstance->curSection->sectionId;
+    if(sectionId >= SECTION_WATCH_GHOST_FROM_CHANNEL && sectionId <= SECTION_WATCH_GHOST_FROM_MENU) localPlayerCount += 1;
+    if(localPlayerCount == 0 && (scenario.settings.gametype & GAMETYPE_ONLINE_SPECTATOR)) localPlayerCount = 1;
+    return localPlayerCount;
+}
+void CtrlRaceSpeedo::Create(Page& page, u32 index, u32 count) {
+    u8 speedoType = (count == 3) ? 4 : count;
+    for(int i = 0; i < count; ++i) {
+        CtrlRaceSpeedo* som = new(CtrlRaceSpeedo);
+        page.AddControl(index + i, *som, 0);
+        char variant[0x20];
+        int pos = i;
+        if(count == 1 && Settings::Mgr::Get().GetSettingValue(Settings::SETTINGSTYPE_RACE, SETTINGRACE_RADIO_SOM) == RACESETTING_SOM_RIGHT) pos = 1;
+        snprintf(variant, 0x20, "Speedo_%1d_%1d", speedoType, pos);
+        som->Load(variant, i);
+    }
+}
+static CustomCtrlBuilder SOM(CtrlRaceSpeedo::Count, CtrlRaceSpeedo::Create);
+
+void CtrlRaceSpeedo::Load(const char* variant, u8 id) {
+    this->hudSlotId = id;
+    ControlLoader loader(this);
+    const char* anims[] ={
+        "Hundreds", "Hundreds", nullptr,
+        "Tens", "Tens", nullptr,
+        "Units", "Units", nullptr,
+        "Dot", "Dot",nullptr,
+        "Tenths", "Tenths", nullptr,
+        "Hundredths", "Hundredths", nullptr,
+        "Thousandths", "Thousandths", nullptr,
+        nullptr
+    };
+
+    loader.Load(UI::raceFolder, "PULSpeedo", variant, anims);
+
+    this->Animate();
+    return;
+}
+
+void CtrlRaceSpeedo::Init() {
+    this->HudSlotColorEnable("speed0", true);
+    this->HudSlotColorEnable("speed1", true);
+    this->HudSlotColorEnable("speed2", true);
+    this->HudSlotColorEnable("speed3", true);
+    this->HudSlotColorEnable("speed4", true);
+    this->HudSlotColorEnable("speed5", true);
+    this->HudSlotColorEnable("speed6", true);
+    this->HudSlotColorEnable("kmh", true);
+    LayoutUIControl::Init();
+    return;
+}
+
+void CtrlRaceSpeedo::OnUpdate() {
+    this->UpdatePausePosition();
+    const u8 digits = Settings::Mgr::Get().GetSettingValue(Settings::SETTINGSTYPE_RACE, SETTINGRACE_SCROLL_SOM);
+    const Kart::Pointers& pointers = Kart::Manager::sInstance->players[this->GetPlayerId()]->pointers;
+    const Kart::Physics* physics = pointers.kartBody->kartPhysicsHolder->physics;
+
+    Vec3 sum;
+    MTX::PSVECAdd(&physics->engineSpeed, &physics->speed2, &sum);
+    MTX::PSVECAdd(&physics->speed3, &sum, &sum);
+    float speed = MTX::PSVECMag(&sum);
+    float speedCap = pointers.kartMovement->hardSpeedLimit;
+    if(speed > speedCap) speed = speedCap;
+
+
+    const u32 speedValue = static_cast<u32>(speed * 1000.0f);
+
+    //10 means empty, 11 dot
+    u32 hundreds = speedValue % 1000000 / 100000;
+    u32 tens = speedValue % 100000 / 10000;
+    u32 units = speedValue % 10000 / 1000;
+    u32 dot = digits >= 1 ? 11 : 10;
+    u32 tenths = digits >= 1 ? speedValue % 1000 / 100 : 10;
+    u32 hundredths = digits >= 2 ? speedValue % 100 / 10 : 10;
+    u32 thousandths = digits == 3 ? speedValue % 100 / 10 : 10;
+
+    if(speedValue < 10000) { //shift everything by 2 to the left
+        hundreds = units;
+        tens = dot;
+        units = tenths;
+        dot = hundredths;
+        tenths = thousandths;
+        hundredths = 10;
+        thousandths = 10;
+    }
+    else if(speedValue < 100000) {
+        hundreds = tens;
+        tens = units;
+        units = dot;
+        dot = tenths;
+        tenths = hundredths;
+        hundredths = thousandths;
+        thousandths = 10;
+    }
+
+    SpeedArg args(hundreds, tens, units, dot, tenths, hundredths, thousandths);
+    this->Animate(&args);
+    return;
+}
+
+void CtrlRaceSpeedo::Animate(const SpeedArg* args) {
+    for(int i = 0; i < 7; ++i) {
+        AnimationGroup& group = this->animator.GetAnimationGroupById(i);
+        float frame = 0.0f;
+        if(args != nullptr) frame = static_cast<float>(args->values[i]);
+        group.PlayAnimationAtFrameAndDisable(0, frame);
+    }
+}
+}//namespace UI
+}//namespace Pulsar
+
+CtrlRaceBase\Speedometer.hpp
+#ifndef _PULSOM_
+#define _PULSOM_
+#include <kamek.hpp>
+#include <UI/CtrlRaceBase/CustomCtrlRaceBase.hpp>
+
+//Simple speedometer that uses TPLs instead of text because the default font numbers have a very ugly black outline
+namespace Pulsar {
+namespace UI {
+class CtrlRaceSpeedo : public CtrlRaceBase {
+public:
+    void Init() override;
+    void OnUpdate() override;
+    static u32 Count();
+    static void Create(Page& page, u32 index, u32 count);
+private:
+    struct SpeedArg {
+        SpeedArg() {}
+        SpeedArg(u32 hundreds, u32 tens, u32 units, u32 dot, u32 tenths, u32 hundredths, u32 thousandths) :
+            hundreds(hundreds), tens(tens), units(units), dot(dot), tenths(tenths), hundredths(hundredths), thousandths(thousandths) {}
+        union {
+            u32 values[7];
+            struct {
+                u32 hundreds;
+                u32 tens;
+                u32 units;
+                u32 dot;
+                u32 tenths;
+                u32 hundredths;
+                u32 thousandths;
+            };
+        };
+    };
+    void Load(const char* variant, u8 id);
+    void Animate(const SpeedArg* args = nullptr);
+};
+}//namespace UI
+}//namespace Pulsar
+
+#endif
+
+Leaderboard\ExpGPVSLeaderboardTotal.cpp
+#include <UI/Leaderboard/ExpGPVSLeaderboardTotal.hpp>
+#include <UI/Leaderboard/LeaderboardDisplay.hpp>
+#include <Settings/Settings.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+void ExpGPVSLeaderboardTotal::OnUpdate() {
+    if (checkLeaderboardDisplaySwapInputs()) {
+        nextLeaderboardDisplayType();
+        fillLeaderboardResults(GetRowCount(), this->results);
+    }
+}
+
+} // namespace UI
+} // namespace Pulsar
+
+Leaderboard\ExpGPVSLeaderboardTotal.hpp
+#ifndef _EXP_GPVS_LEADERBOARD_TOTAL_
+#define _EXP_GPVS_LEADERBOARD_TOTAL_
+#include <kamek.hpp>
+#include <UI/UI.hpp>
+#include <MarioKartWii/UI/Page/Leaderboard/GPVSLeaderboardTotal.hpp>
+
+// Extends Leaderboard to add the ability to toggle between displaying times and names
+namespace Pulsar {
+namespace UI {
+
+class ExpGPVSLeaderboardTotal : public Pages::GPVSLeaderboardTotal  {
+public:
+    void OnUpdate() override;
+};
+
+
+}//namespace UI
+}//namespace Pulsar
+#endif
+
+Leaderboard\ExpGPVSLeaderboardUpdate.cpp
+#include <UI/Leaderboard/ExpGPVSLeaderboardUpdate.hpp>
+#include <UI/Leaderboard/LeaderboardDisplay.hpp>
+#include <Settings/Settings.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+void ExpGPVSLeaderboardUpdate::OnUpdate() {
+    if (checkLeaderboardDisplaySwapInputs()) {
+        nextLeaderboardDisplayType();
+        fillLeaderboardResults(GetRowCount(), this->results);
+    }
+}
+
+// Apply old toggle logic, set default display type
+void ExpGPVSLeaderboardUpdate::BeforeEntranceAnimations() {
+    if(static_cast<Pulsar::Times>(Pulsar::Settings::Mgr::Get().GetUserSettingValue(static_cast<Pulsar::Settings::UserType>(Pulsar::Settings::SETTINGSTYPE_RR2), Pulsar::SETTINGRR2_RADIO_TIMES)) == Pulsar::TIMES_DISABLED) {
+        setLeaderboardDisplayType(LEADERBOARD_DISPLAY_NAMES);
+    } else if(static_cast<Pulsar::Times>(Pulsar::Settings::Mgr::Get().GetUserSettingValue(static_cast<Pulsar::Settings::UserType>(Pulsar::Settings::SETTINGSTYPE_RR2), Pulsar::SETTINGRR2_RADIO_TIMES)) == Pulsar::TIMES_ENABLED) {
+        setLeaderboardDisplayType(LEADERBOARD_DISPLAY_TIMES);
+    }
+
+    if (System::sInstance->IsContext(PULSAR_MODE_OTT)) {
+        setLeaderboardDisplayType(LEADERBOARD_DISPLAY_TIMES);
+    }
+
+    fillLeaderboardResults(GetRowCount(), this->results);
+}
+
+}
+}
+
+Leaderboard\ExpGPVSLeaderboardUpdate.hpp
+#ifndef _EXP_GPVS_LEADERBOARD_
+#define _EXP_GPVS_LEADERBOARD_
+#include <kamek.hpp>
+#include <UI/UI.hpp>
+#include <MarioKartWii/UI/Page/Leaderboard/GPVSLeaderboardUpdate.hpp>
+
+// Extends Leaderboard to add the ability to toggle between displaying times and names
+namespace Pulsar {
+namespace UI {
+class ExpGPVSLeaderboardUpdate : public Pages::GPVSLeaderboardUpdate {
+public:
+    void OnUpdate() override;
+    void BeforeEntranceAnimations() override;
+};
+}//namespace UI
+}//namespace Pulsar
+#endif
+
+Leaderboard\ExpWWLeaderboardUpdate.cpp
+#include <UI/Leaderboard/ExpWWLeaderboardUpdate.hpp>
+#include <UI/Leaderboard/LeaderboardDisplay.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+void ExpWWLeaderboardUpdate::OnUpdate() {
+    if (checkLeaderboardDisplaySwapInputs()) {
+        nextLeaderboardDisplayType();
+        fillLeaderboardResults(GetRowCount(), this->results);
+    }
+}
+
+} //namespace UI
+} //namespace Pulsar
+
+Leaderboard\ExpWWLeaderboardUpdate.hpp
+#ifndef _EXP_WW_LEADERBOARD_
+#define _EXP_WW_LEADERBOARD_
+#include <MarioKartWii/UI/Page/Leaderboard/WWLeaderboardUpdate.hpp>
+
+// Extends Leaderboard to add the ability to toggle between displaying times and names
+namespace Pulsar {
+namespace UI {
+class ExpWWLeaderboardUpdate : public Pages::WWLeaderboardUpdate {
+public:
+    void OnUpdate() override;
+};
+}//namespace UI
+}//namespace Pulsar
+#endif
+
+Leaderboard\LeaderboardDisplay.cpp
+#include <UI/Leaderboard/LeaderboardDisplay.hpp>
+#include <MarioKartWii/Race/RaceInfo/RaceInfo.hpp>
+#include <MarioKartWii/UI/Section/SectionMgr.hpp>
+#include <MarioKartWii/RKNet/RKNetController.hpp>
+#include <MarioKartWii/RKNet/USER.hpp>
+#include <UI/UI.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+static LeaderboardDisplayType displayLeaderboardType = LEADERBOARD_DISPLAY_NAMES;
+
+void setLeaderboardDisplayType(LeaderboardDisplayType type) {
+    displayLeaderboardType = type;
+}
+
+LeaderboardDisplayType getLeaderboardDisplayType() {
+    return displayLeaderboardType;
+}
+
+// In case we want to add more display types (FC, flags, whatever..)
+void nextLeaderboardDisplayType() {
+    if (displayLeaderboardType == LEADERBOARD_DISPLAY_NAMES) {
+        displayLeaderboardType = LEADERBOARD_DISPLAY_TIMES;
+    } else if (displayLeaderboardType == LEADERBOARD_DISPLAY_TIMES) {
+        if (RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_NONE) {
+            displayLeaderboardType = LEADERBOARD_DISPLAY_NAMES;
+        } else {
+            displayLeaderboardType = LEADERBOARD_DISPLAY_FC;
+        }
+    } else if (displayLeaderboardType == LEADERBOARD_DISPLAY_FC) {
+        displayLeaderboardType = LEADERBOARD_DISPLAY_NAMES;
+    }
+}
+
+bool isSectionSpectatorLiveView(SectionId id) {
+    return id == SECTION_P1_WIFI_VS_LIVEVIEW || id == SECTION_P2_WIFI_VS_LIVEVIEW || id == SECTION_P1_WIFI_BT_LIVEVIEW || id == SECTION_P2_WIFI_BT_LIVEVIEW;
+}
+
+void fillLeaderboardResults(int count, CtrlRaceResult** results) {
+    // Copy the way the game loops here
+    for(int i = 0; i < (count & 0xff); ++i) {
+        const int position = (i + 1) & 0xff;
+        const u8 playerId = Raceinfo::sInstance->playerIdInEachPosition[position - 1];
+        if(displayLeaderboardType == LEADERBOARD_DISPLAY_TIMES) {
+            results[i]->FillFinishTime(playerId);
+        } else if(displayLeaderboardType == LEADERBOARD_DISPLAY_NAMES) {
+            results[i]->FillName(playerId);
+        } else if(displayLeaderboardType == LEADERBOARD_DISPLAY_FC) {
+            if (playerId < 12) {
+                u32 hudSlot = Racedata::sInstance->GetHudSlotId(playerId);
+                u64 fc = RKNet::USERHandler::sInstance->receivedPackets[playerId].fc;
+
+                // This is the local player, so we need to get the FC from the packet we send.
+                if (hudSlot < 2 && !isSectionSpectatorLiveView(SectionMgr::sInstance->curSection->sectionId)) {
+                    fc = RKNet::USERHandler::sInstance->toSendPacket.fc;
+                }
+
+                u32 fcParts[3];
+                for (int j = 0; j < 3; ++j) {
+                    fcParts[j] = fc % 10000;
+                    fc /= 10000;
+                }
+
+                wchar_t fcText[16];
+                swprintf(fcText, 16, L"%04d-%04d-%04d", fcParts[2], fcParts[1], fcParts[0]);
+
+                if (wcscmp(fcText, L"0000-0000-0000") == 0) {
+                    wcsncpy(fcText, L"----", 5);
+                    continue;
+                }
+
+                Text::Info textInfo;
+                textInfo.strings[0] = fcText;
+
+                results[i]->SetTextBoxMessage("player_name", UI::BMG_TEXT, &textInfo);
+                results[i]->ResetTextBoxMessage("time");
+
+            }
+        }
+    }
+}
+
+const u32 WIIMOTE_DPAD_BUTTONS = WPAD::WPAD_BUTTON_LEFT | WPAD::WPAD_BUTTON_RIGHT | WPAD::WPAD_BUTTON_DOWN | WPAD::WPAD_BUTTON_UP;
+const u32 CLASSIC_DPAD_BUTTONS = WPAD::WPAD_CL_BUTTON_UP | WPAD::WPAD_CL_BUTTON_LEFT | WPAD::WPAD_CL_BUTTON_DOWN | WPAD::WPAD_CL_BUTTON_RIGHT;
+const u32 GC_DPAD_BUTTONS = PAD::PAD_BUTTON_LEFT | PAD::PAD_BUTTON_RIGHT | PAD::PAD_BUTTON_DOWN | PAD::PAD_BUTTON_UP;
+
+bool checkLeaderboardDisplaySwapInputs() {
+    const Input::RealControllerHolder* controllerHolder = SectionMgr::sInstance->pad.padInfos[0].controllerHolder;
+    const ControllerType controllerType = controllerHolder->curController->GetType();
+    const u16 inputs = controllerHolder->inputStates[0].buttonRaw;
+    const u16 newInputs = (inputs & ~controllerHolder->inputStates[1].buttonRaw);
+
+    bool swapDisplayType = false;
+    switch (controllerType) {
+    case NUNCHUCK:
+    case WHEEL:
+        swapDisplayType = (newInputs & WIIMOTE_DPAD_BUTTONS) != 0;
+        break;
+    case CLASSIC:
+        swapDisplayType = (newInputs & (WPAD::WPAD_CL_TRIGGER_L | WPAD::WPAD_CL_TRIGGER_R | CLASSIC_DPAD_BUTTONS)) != 0;
+        break;
+    default:
+        swapDisplayType = (newInputs & (PAD::PAD_BUTTON_L | PAD::PAD_BUTTON_R | GC_DPAD_BUTTONS)) != 0;
+        break;
+    }
+
+    return swapDisplayType;
+}
+
+}//namespace UI
+}//namespace Pulsar
+
+Leaderboard\LeaderboardDisplay.hpp
+#ifndef _UI_LEADERBOARD_DISPLAY_H_
+#define _UI_LEADERBOARD_DISPLAY_H_
+
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Ctrl//CtrlRace/CtrlRaceResult.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+enum LeaderboardDisplayType {
+    LEADERBOARD_DISPLAY_NAMES,
+    LEADERBOARD_DISPLAY_TIMES,
+    LEADERBOARD_DISPLAY_FC
+};
+
+void setLeaderboardDisplayType(LeaderboardDisplayType type);
+LeaderboardDisplayType getLeaderboardDisplayType();
+
+void nextLeaderboardDisplayType();
+void fillLeaderboardResults(int count, CtrlRaceResult** results);
+
+bool checkLeaderboardDisplaySwapInputs();
+
+}//namespace UI
+}//namespace Pulsar
+#endif
+
+SelectStage\ExpVotePage.cpp
+#include <UI/SelectStage/ExpVotePage.hpp>
+#include <MarioKartWii/UI/Section/SectionMgr.hpp>
+#include <MarioKartWii/RKNet/RKNetController.hpp>
+#include <MarioKartWii/UI/Page/Other/SELECTStageMgr.hpp>
+#include <core/rvl/OS/OS.hpp>
+#include <PulsarSystem.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+void ExpVotePage::BeforeControlUpdate() {
+    if (this->currentState == STATE_ACTIVE && this->connectionState != 3) {
+        if (System::sInstance->IsContext(PULSAR_MODE_KO)) {
+            u32 aidSave = RKNet::Controller::sInstance->subs[RKNet::Controller::sInstance->currentSub].availableAids;
+            RKNet::Controller::sInstance->subs[RKNet::Controller::sInstance->currentSub].availableAids = aidSave | 1;
+            Pages::Vote::BeforeControlUpdate();
+            RKNet::Controller::sInstance->subs[RKNet::Controller::sInstance->currentSub].availableAids = aidSave;
+            return;
+        }
+    }
+
+    Pages::Vote::BeforeControlUpdate();
+}
+
+} // namespace UI
+} // namespace Pulsar
+
+
+SelectStage\ExpVotePage.hpp
+#ifndef _EXP_VOTE_PAGE_HPP
+#define _EXP_VOTE_PAGE_HPP
+
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Page/Other/Votes.hpp>
+
+namespace Pulsar {
+namespace UI {
+
+class ExpVotePage : public Pages::Vote {
+    void BeforeControlUpdate() override;
+};
+
+} // namespace UI
+} // namespace Pulsar
+
+#endif // _EXP_VOTE_PAGE_HPP
+
+TeamSelect\TeamSelect.cpp
+#include <MarioKartWii/RKNet/RKNetController.hpp>
+#include <MarioKartWii/RKNet/SELECT.hpp>
+#include <MarioKartWii/UI/Page/Other/FriendRoom.hpp>
+#include <UI/TeamSelect/TeamSelect.hpp>
+#include <UI/UI.hpp>
+
+
+namespace Pulsar {
+namespace UI {
+
+u8 TeamSelect::teams[24] = { 0 };
+bool TeamSelect::isEnabled = false;
+const char* TeamSelect::border = "border";
+const char* TeamSelect::miiBg = "bg";
+
+TeamSelect::TeamSelect() {
+    hasBackButton = true;
+    externControlCount = 0;
+    internControlCount = 26;
+    extraControlNumber = 0;
+    controlSources = 2;
+    titleBmg = BMG_TEAM_SELECT;
+    nextPageId = PAGE_NONE;
+    prevPageId = PAGE_FRIEND_ROOM;
+    nextSection = SECTION_NONE;
+    movieStartFrame = -1;
+    isLocked = false;
+    activePlayerBitfield = 1;
+
+    onArrowClickHandler.subject = this;
+    onArrowClickHandler.ptmf = &TeamSelect::OnArrowClick;
+    onArrowSelectHandler.subject = this;
+    onArrowSelectHandler.ptmf = &TeamSelect::OnArrowSelect;
+    onArrowDeselectHandler.subject = this;
+    onArrowDeselectHandler.ptmf = &TeamSelect::OnArrowDeselect;
+    onButtonClickHandler.subject = this;
+    onButtonClickHandler.ptmf = &TeamSelect::OnButtonClick;
+    onButtonSelectHandler.subject = this;
+    onButtonSelectHandler.ptmf = &TeamSelect::OnButtonSelect;
+    onButtonDeselectHandler.subject = this;
+    onButtonDeselectHandler.ptmf = &TeamSelect::OnButtonDeselect;
+    onBackPressHandler.subject = this;
+    onBackPressHandler.ptmf = &TeamSelect::OnBackPress;
+    onToggleButtonClick.subject = this;
+    onToggleButtonClick.ptmf = &TeamSelect::OnToggleButtonClick;
+
+
+    this->controlsManipulatorManager.Init(1, false);
+    this->SetManipulatorManager(controlsManipulatorManager);
+    this->controlsManipulatorManager.SetGlobalHandler(START_PRESS, onStartPressHandler, false, false);
+    this->controlsManipulatorManager.SetGlobalHandler(BACK_PRESS, onBackPressHandler, false, false);
+    activePlayerBitfield = 1;
+
+}
+
+
+void TeamSelect::OnInit() {
+    this->miiGroup = &SectionMgr::sInstance->curSection->Get<Pages::FriendRoomManager>()->miiGroup;
+    Menu::OnInit();
+    /*
+    for(u8 aid = 0; aid < 12; aid++) {
+        u32 idx = this->CalcIdx(aid);
+        if(idx != 0xFF && this->teams[aid] == 1) {
+            this->RotateArrow(this->arrows[idx], 1);
+        }
+
+    }
+    */
+}
+
+
+void TeamSelect::BeforeEntranceAnimations() {
+    Pages::Menu::BeforeEntranceAnimations();
+    if(this->toggle.GetState() != this->isEnabled) this->toggle.ToggleState(this->isEnabled);
+    this->toggle.SelectInitial(0);
+    const u32 bmgId = this->toggle.GetState() == false ? BMG_TEAMS_DISABLED : BMG_TEAMS_ENABLED;
+    this->toggle.SetMessage(bmgId);
+    this->isLocked = false;
+
+    for(int idx = 0; idx < 12; ++idx) {
+        this->miis[idx].animator.GetAnimationGroupById(0).PlayAnimationAtFrameAndDisable(0, 0.0f);
+    }
+    for(u8 teamsArrayIdx = 0; teamsArrayIdx < 24; ++teamsArrayIdx) {
+        u32 idx = this->CalcIdx(teamsArrayIdx);
+        u8 curTeam = 0;
+        if(idx != 0xFF) {
+            u8 curTeam = this->teams[teamsArrayIdx];
+            if(curTeam == 1) this->RotateArrow(this->arrows[idx], 1);
+            this->SetColours(idx, curTeam);
+            this->miis[idx].animator.GetAnimationGroupById(0).PlayAnimationAtFrameAndDisable(!curTeam, 0.0f);
+        }
+    }
+
+}
+
+void TeamSelect::BeforeControlUpdate() {
+    const RKNet::Controller* controller = RKNet::Controller::sInstance;
+    const RKNet::ControllerSub* sub = &controller->subs[0];
+    if(sub->connectionUserDatas[0].playersAtConsole == 0) sub = &controller->subs[1];
+
+    int idx = 0;
+    for(int aid = 0; aid < 12; ++aid) {
+        if(sub->availableAids & (1 << aid)) {
+            for(int player = 0; player < sub->connectionUserDatas[aid].playersAtConsole; ++player) {
+                LayoutUIControl& mii = this->miis[idx];
+                mii.SetMiiPane("chara", *this->miiGroup, aid * 2 + player, 2);
+                mii.SetMiiPane("chara_shadow", *this->miiGroup, aid * 2 + player, 2);
+                mii.isHidden = false;
+                mii.animator.GetAnimationGroupById(0).PlayAnimationAtFrameAndDisable(!this->teams[aid + 12 * player], 0.0f);
+                this->arrowMiiIdx[idx] = aid * 2 + player;
+                this->SetColours(idx, this->teams[aid + 12 * player]);
+                this->RotateArrow(this->arrows[idx], this->teams[aid + 12 * player]);
+
+                PushButton& arrow = this->arrows[idx];
+                arrow.isHidden = false;
+                arrow.manipulator.inaccessible = false;
+                if(arrow.IsSelected()) {
+                    this->text.miis[0] = this->miiGroup->GetMii(this->arrowMiiIdx[arrow.buttonId]);
+                    this->name.SetMessage(BMG_MII_NAME, &this->text);
+                }
+                ++idx;
+            }
+        }
+    }
+    for(int remIdx = idx; remIdx < 12; ++remIdx) {
+
+        this->miis[remIdx].isHidden = true;
+        this->arrows[remIdx].isHidden = true;
+        this->arrows[remIdx].manipulator.inaccessible = true;
+    }
+}
+
+UIControl* TeamSelect::CreateControl(u32 id) {
+    if(id > 26) return nullptr;
+    const u32 count = this->controlCount;
+    this->controlCount++;
+    char variant[0x40];
+    if(id < 12) {
+        this->AddControl(count, this->arrows[id], 0);
+        snprintf(variant, 0x40, "Arrow%d", id);
+        this->arrows[id].Load(UI::buttonFolder, "TeamArrow", variant, 1, 0, false);
+        this->arrows[id].buttonId = id;
+        this->arrows[id].SetOnClickHandler(this->onArrowClickHandler, 0);
+        this->arrows[id].SetOnSelectHandler(this->onArrowSelectHandler);
+        return &this->arrows[id];
+    }
+    else if(id < 24) {
+        id = id - 12;
+        this->AddControl(count, this->miis[id], 0);
+        ControlLoader loader(&this->miis[id]);
+        snprintf(variant, 0x40, "Mii%d", id);
+        const char* brctr = "TeamMii";
+        static const char* miiAnim[5] ={ "Translate", "TranslateRight", "TranslateLeft", nullptr, nullptr };
+        loader.Load(UI::controlFolder, brctr, variant, miiAnim);
+        return &this->miis[id];
+    }
+    else if(id == 24) {
+        this->AddControl(count, this->name, 0);
+        ControlLoader loader(&this->name);
+        const char* brctr = "TeamName";
+        loader.Load(UI::controlFolder, brctr, brctr, nullptr);
+        return &this->name;
+
+    }
+    else /*if(id == 25)*/ {
+        this->AddControl(count, this->toggle, 0);
+        this->toggle.Load(1, UI::buttonFolder, "TeamSelectEnable", "Enable");
+        this->toggle.SetOnClickHandler(this->onToggleButtonClick, 0);
+        return &this->toggle;
+    }
+}
+
+void TeamSelect::OnArrowClick(PushButton& button, u32 hudSlotId) {
+    const s32 id = button.buttonId;
+    u8 teamsArrayIdx = this->CalcTeamsArrayIdx(id);
+    if(teamsArrayIdx != 0xFF) {
+        const u8 newTeam = TeamSelect::teams[teamsArrayIdx] ^ 1;
+        TeamSelect::teams[teamsArrayIdx] = newTeam;
+        this->RotateArrow(button, newTeam);
+        this->SetColours(id, newTeam);
+        this->miis[id].animator.GetAnimationGroupById(0).PlayAnimationAtFrameAndDisable(!newTeam, 0.0f);
+    }
+}
+
+void TeamSelect::OnArrowSelect(PushButton& button, u32 hudSlotId) {
+    this->text.miis[0] = this->miiGroup->GetMii(this->arrowMiiIdx[button.buttonId]);
+    this->name.SetMessage(BMG_MII_NAME, &this->text);
+}
+
+void TeamSelect::OnToggleButtonClick(ToggleButton& button, u32) {
+    const u32 bmgId = button.GetState() == false ? BMG_TEAMS_DISABLED : BMG_TEAMS_ENABLED;
+    this->isEnabled = button.GetState();
+    button.SetMessage(bmgId);
+}
+
+int TeamSelect::GetActivePlayerBitfield() const {
+    return this->activePlayerBitfield;
+}
+
+int TeamSelect::GetPlayerBitfield() const {
+    return this->playerBitfield;
+}
+
+ManipulatorManager& TeamSelect::GetManipulatorManager() {
+    return this->controlsManipulatorManager;
+}
+
+UIControl* TeamSelect::CreateExternalControl(u32 id) {
+    return nullptr;
+}
+
+void TeamSelect::SetButtonHandlers(PushButton& button) {
+    button.SetOnClickHandler(this->onButtonClickHandler, 0);
+    button.SetOnSelectHandler(this->onButtonSelectHandler);
+    button.SetOnDeselectHandler(this->onButtonDeselectHandler);
+}
+
+void TeamSelect::OnBackPress(u32 hudSlotId) {
+    this->EndStateAnimated(0.0f, 1);
+}
+
+void TeamSelect::OnButtonClick(PushButton& button, u32 hudSlotId) {
+    this->EndStateAnimated(1, button.GetAnimationFrameSize());
+}
+
+u8 TeamSelect::CalcTeamsArrayIdx(u32 idx) {
+    const RKNet::Controller* controller = RKNet::Controller::sInstance;
+    const RKNet::ControllerSub* sub = &controller->subs[0];
+    if(sub->connectionUserDatas[0].playersAtConsole == 0) sub = &controller->subs[1];
+
+    u32 curIdx = 0;
+    for(u8 curAid = 0; curAid < 12; ++curAid) {
+        if(sub->availableAids & (1 << curAid)) {
+            for(int player = 0; player < sub->connectionUserDatas[curAid].playersAtConsole; ++player) {
+                if(curIdx == idx) return curAid + 12 * player;
+                ++curIdx;
+            }
+        }
+    }
+    return 0xFF;
+}
+
+u32 TeamSelect::CalcIdx(u8 teamsArrayIdx) {
+    const RKNet::Controller* controller = RKNet::Controller::sInstance;
+    const RKNet::ControllerSub* sub = &controller->subs[0];
+    if(sub->connectionUserDatas[0].playersAtConsole == 0) sub = &controller->subs[1];
+
+    bool isGuest = teamsArrayIdx >= 12;
+    u8 aid = isGuest ? teamsArrayIdx - 12 : teamsArrayIdx;
+    if(!(sub->availableAids & (1 << aid)) || isGuest && sub->connectionUserDatas[aid].playersAtConsole < 2) return 0xFF;
+
+    //the aid is valid, therefore it has an idx
+    u32 idx = 0;
+    for(u8 curAid = 0; curAid < aid; ++curAid) {
+        if(sub->availableAids & (1 << curAid)) {
+            for(int player = 0; player < sub->connectionUserDatas[curAid].playersAtConsole; ++player) ++idx;
+        }
+    }
+    return isGuest ? idx + 1 : idx;
+}
+
+void TeamSelect::RotateArrow(PushButton& button, u8 team) {
+    RotateArrowPane(button, "chara_shadow", team);
+    RotateArrowPane(button, "color_yajirushi", team);
+    RotateArrowPane(button, "chara_c_down", team);
+    RotateArrowPane(button, "chara_light_01", team);
+}
+
+void TeamSelect::RotateArrowPane(PushButton& button, const char* name, u8 team) {
+    lyt::Picture* pane = static_cast<lyt::Picture*>(button.layout.GetPaneByName(name));
+    nw4r::math::VEC2* vec = reinterpret_cast<nw4r::math::VEC2*>(pane->texCoords.data);
+
+    bool isRed = team == 1;
+    vec[0].x = isRed ? 0.0f : 1.0f;
+    vec[1].x = isRed ? 1.0f : 0.0f;
+    vec[2].x = isRed ? 0.0f : 1.0f;
+    vec[3].x = isRed ? 1.0f : 0.0f;
+
+}
+
+void TeamSelect::SetColours(u32 idx, u8 team) {
+    s16 r = 33;
+    s16 b = 0xFF;
+    s16 g = 33;
+    if(team == 1) {
+        r = 0xDC;
+        b = 0;
+        g = 33;
+    }
+    nw4r::lyt::Material* arrowBorder = this->arrows[idx].layout.GetPaneByName(this->border)->GetMaterial();
+    arrowBorder->tevColours[0].r = r;
+    arrowBorder->tevColours[0].g = 0;
+    arrowBorder->tevColours[0].b = b;
+    arrowBorder->tevColours[0].a = 255;
+    arrowBorder->tevColours[1].r = r;
+    arrowBorder->tevColours[1].g = 0;
+    arrowBorder->tevColours[1].b = b;
+    arrowBorder->tevColours[1].a = 255;
+
+
+    nw4r::lyt::Material* miiBg = this->miis[idx].layout.GetPaneByName(this->miiBg)->GetMaterial();
+    miiBg->tevColours[1].r = r;
+    miiBg->tevColours[1].g = 0;
+    miiBg->tevColours[1].b = b;
+    miiBg->tevColours[1].a = 255;
+
+
+    nw4r::lyt::Material* miiBorder = this->miis[idx].layout.GetPaneByName(this->border)->GetMaterial();
+    if(r == 0xDC) r = 0xb3;
+    else {
+        r = 0;
+        g = 0;
+    }
+    miiBorder->tevColours[0].r = r;
+    miiBorder->tevColours[0].g = 0;
+    miiBorder->tevColours[0].b = b;
+    miiBorder->tevColours[0].a = 255;
+    miiBorder->tevColours[1].r = r;
+    miiBorder->tevColours[1].g = 0;
+    miiBorder->tevColours[1].b = b;
+    miiBorder->tevColours[1].a = 255;
+}
+
+//Sets Team using the TeamSelectPage if it has been enabled by the host; verifies the validity of the teams
+static void SetTeams(RKNet::SELECTHandler* handler, u32& teams) {
+    const RKNet::Controller* controller = RKNet::Controller::sInstance;
+    const RKNet::ControllerSub* sub = &controller->subs[0];
+    if(sub->connectionUserDatas[0].playersAtConsole == 0) sub = &controller->subs[1];
+
+    bool isValid = false;
+    Team firstTeam = UI::TeamSelect::GetPlayerTeam(0); //guaranteed to exist since a room always has aid0
+    if((handler->mode == RKNet::ONLINEMODE_PRIVATE_VS || handler->mode == RKNet::ONLINEMODE_PRIVATE_BATTLE)
+        && UI::TeamSelect::isEnabled) {
+
+        for(int aid = 0; aid < sub->playerCount; ++aid) {
+            if(sub->availableAids & (1 << aid)) {
+                for(int player = 0; player < sub->connectionUserDatas[aid].playersAtConsole; ++player) {
+                    Team curSlotTeam = UI::TeamSelect::GetPlayerTeam(aid + 12 * player);
+                    if(curSlotTeam != firstTeam) isValid = true;
+                    teams = teams | (curSlotTeam & 1) << (aid * 2 + player);
+                }
+            }
+        }
+    }
+    if(!isValid) handler->DecidePrivateTeams(teams);
+}
+kmCall(0x806619d8, SetTeams);
+}//namespace UI
+}//namespace Pulsar
+
+TeamSelect\TeamSelect.hpp
+#ifndef _TEAMSELECT_
+#define _TEAMSELECT_
+#include <kamek.hpp>
+#include <MarioKartWii/UI/Page/Menu/Menu.hpp>
+#include <MarioKartWii/UI/Page/Menu/MiiSelect.hpp>
+#include <UI/UI.hpp>
+#include <UI/ToggleControls.hpp>
+
+
+//Custom Page that allows the host (and only the host) to arrange teams as they see fit. This also has a ToggleButton to disable it if wanted
+namespace Pulsar {
+namespace UI {
+
+
+class TeamSelect : public Pages::MenuInteractable {
+public:
+    static const PulPageId id = PULPAGE_TEAMSELECT;
+    TeamSelect();
+    void OnInit() override;
+    void BeforeEntranceAnimations() override;
+    void BeforeControlUpdate() override;
+    int GetActivePlayerBitfield() const override;
+    int GetPlayerBitfield() const override;
+    ManipulatorManager& GetManipulatorManager() override;; //offset 0x70
+    UIControl* CreateExternalControl(u32 id) override; //0x84
+    UIControl* CreateControl(u32 id) override; //0x88
+    void SetButtonHandlers(PushButton& button) override; //80853aac 0x8C
+    static inline Team GetPlayerTeam(u8 teamsArrayIdx) { return static_cast<Team>(teams[teamsArrayIdx]); }
+
+private:
+    void OnArrowClick(PushButton& button, u32 hudSlotId);
+    void OnArrowSelect(PushButton& button, u32 hudSlotId);
+    void OnArrowDeselect(PushButton& button, u32 hudSlotId) {};
+    void OnButtonClick(PushButton& button, u32 hudSlotId);
+    void OnButtonSelect(PushButton& button, u32 hudSlotId) {};
+    void OnButtonDeselect(PushButton& button, u32 hudSlotId) {};
+    void OnBackPress(u32 hudSlotId);
+    void OnToggleButtonClick(ToggleButton& button, u32);
+    void SetColours(u32 idx, u8 team);
+    static u8 CalcTeamsArrayIdx(u32 teamsArrayIdx);
+    static u32 CalcIdx(u8 teamsArrayIdx);
+    static void RotateArrow(PushButton& button, u8 team);
+    static void RotateArrowPane(PushButton& button, const char* pane, u8 team);
+
+    PtmfHolder_2A<TeamSelect, void, PushButton&, u32> onArrowClickHandler;
+    PtmfHolder_2A<TeamSelect, void, PushButton&, u32> onArrowSelectHandler;
+    PtmfHolder_2A<TeamSelect, void, PushButton&, u32> onArrowDeselectHandler;
+    PtmfHolder_2A<TeamSelect, void, ToggleButton&, u32> onToggleButtonClick;
+    PushButton arrows[12];
+    LayoutUIControl miis[12];
+    MiiName name;
+    MiiGroup* miiGroup; //take friendroom's
+    u8 arrowMiiIdx[12];
+    ToggleButton toggle;
+    static const char* miiBg;
+    static const char* border;
+    static u8 teams[24];
+
+public:
+    static bool isEnabled;
+
+
+
+};
+}//namespace UI
+}//namespace Pulsar
+#endif
+
