@@ -125,6 +125,7 @@ void ExpSection::CreatePulPages() {
         this->CreateAndInitPage(*this, PAGE_MESSAGEBOX);
         this->CreateAndInitPage(*this, PAGE_SELECT_STAGE_MGR);
     }
+    if(this->Get<ExpFroom>() != nullptr) this->CreateAndInitPage(*this, FroomKickPage::id);
 }
 
 void ExpSection::CreateAndInitPage(ExpSection& self, u32 id) {

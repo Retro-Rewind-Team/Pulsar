@@ -41,6 +41,8 @@ private:
     void ExpFroom::OnKickPlayersButtonClick(PushButton& button, u32 hudSlotId);
     PushButton settingsButton;
     PushButton teamsButton;
+    PushButton KickButton;
+
     bool areControlsHidden;
 public:
     PulPageId topSettingsPage;

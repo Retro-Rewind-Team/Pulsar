@@ -51,12 +51,13 @@ void ExpFroom::OnInit() {
 
 // ExpFroom.cpp (excerpt)
 void ExpFroom::OnKickPlayersButtonClick(PushButton& button, u32 hudSlotId) {
-    // Hide the background friend-room controls so they don't overlap
+    OS::Report("ExpFroom::OnKickPlayersButtonClick() - Entry\n");
     this->areControlsHidden = true;
-
-    // Now add the FroomKickPage as a layer
-    Section* section = SectionMgr::sInstance->curSection;
-    SectionMgr::sInstance->curSection->AddPageLayer(static_cast<PageId>(FroomKickPage::id));
+    OS::Report("ExpFroom::OnKickPlayersButtonClick() - Controls hidden\n");
+    ExpSection::GetSection()->GetPulPage<SettingsPanel>()->prevPageId = PAGE_FRIEND_ROOM;
+    OS::Report("ExpFroom::OnKickPlayersButtonClick() - Set previous page ID to PAGE_FRIEND_ROOM\n");
+    this->AddPageLayer(static_cast<PageId>(PULPAGE_FROOMKICK), 0);
+    OS::Report("ExpFroom::OnKickPlayersButtonClick() - Exit\n");
 }
 
 void ExpFroom::OnResume() {
