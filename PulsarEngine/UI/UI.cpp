@@ -17,6 +17,7 @@
 
 //Pulsar Custom Pages:
 #include <UI/TeamSelect/TeamSelect.hpp>
+#include <UI/RoomKick/RoomKickPage.hpp>
 #include <AutoTrackSelect/AutoVote.hpp>
 #include <AutoTrackSelect/ChooseNextTrack.hpp>
 #include <Gamemodes/KO/KORaceEndPage.hpp>
@@ -124,7 +125,10 @@ void ExpSection::CreatePulPages() {
         this->CreateAndInitPage(*this, PAGE_MESSAGEBOX);
         this->CreateAndInitPage(*this, PAGE_SELECT_STAGE_MGR);
     }
-    if(this->Get<ExpFroom>() != nullptr) this->CreateAndInitPage(*this, PULPAGE_TEAMSELECT); //can also put it as part of the case froom of createandinitpage
+    if(this->Get<ExpFroom>() != nullptr) {
+        this->CreateAndInitPage(*this, PULPAGE_TEAMSELECT);
+        this->CreateAndInitPage(*this, RoomKickPage::id);
+    }
 }
 
 void ExpSection::CreateAndInitPage(ExpSection& self, u32 id) {
@@ -199,6 +203,9 @@ void ExpSection::CreateAndInitPage(ExpSection& self, u32 id) {
             break;
         case TeamSelect::id:
             page = new TeamSelect;
+            break;
+        case RoomKickPage::id:
+            page = new RoomKickPage;
             break;
         case KO::RaceEndPage::id:
             initId = KO::RaceEndPage::fakeId;

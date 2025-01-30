@@ -899,6 +899,7 @@ ScheduleDisconnection__7SectionFv = 0x80623054
 CreatePageById__7SectionF6PageId = 0x80623390
 CreateSectionPages__7SectionF9SectionId = 0x8062c3a4
 AddInitialLayers__7SectionF9SectionId = 0x80630094
+RemoveTopLayerPage__7SectionFv = 0x80623288
 
 #RKSYSRequester
 NotifyNewLicenseContent__14RKSYSRequesterFv = 0x80621410
@@ -955,6 +956,8 @@ PlayAnimationAtFrameAndDisable__14AnimationGroupFUif = 0x8063cb20
 
 ##MANIPULATOR
 #ManipulatorManager
+__ct__18ManipulatorManagerFv = 0x805eeb68
+__dt__18ManipulatorManagerFv = 0x805eeb8c
 UpdatePlayerBitfield2__18ManipulatorManagerFUi = 0x805eec50
 Load__18ManipulatorManagerFv = 0x805eece8
 GetControllerHolder__18ManipulatorManagerFUc = 0x805eee0c
@@ -1099,6 +1102,10 @@ OnClick__10PushButtonFv = 0x805be42c
 GetRuntimeTypeInfo__10PushButtonCFv = 0x805be610
 __vt__10PushButton = 0x808b776c
 SetOnClickHandler__10PushButtonFRC39PtmfHolder_2A<4Page,v,R10PushButton,Ui>Uc =0x805bdac8
+
+#FriendButton
+__ct__12FriendButtonFv = 0x805d380c
+__dt__12FriendButtonFv = 0x805d3850
 
 #JoinFriendButton
 SetStatus__16JoinFriendButtonFUi = 0x805d56ac
@@ -1302,6 +1309,10 @@ AddPageLayer__4PageF6PageIdUi = 0x806025b0
 PlaySound__4PageF8SoundIDsUi = 0x80602cf8
 SetTransitionSound__4PageFUiUi = 0x80602d20
 transitionDelay__4Page = 0x80896830
+
+#YesNoMessageBox
+SetMessageBoxMsg__Q25Pages5YesNoFUiPQ24Text4Info = 0x806525fc
+PrepareButton__Q25Pages5YesNoFUiUiPQ24Text4InfoUi39PtmfHolder_2A<4Page,v,Ui,R10PushButton> = 0x80652604
 
 #FriendRoomPage
 __ct__Q25Pages10FriendRoomFv = 0x805d7f78
