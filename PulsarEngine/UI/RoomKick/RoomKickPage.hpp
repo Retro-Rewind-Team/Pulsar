@@ -6,6 +6,7 @@
 #include <MarioKartWii/UI/Page/Menu/MiiSelect.hpp>
 #include <MarioKartWii/UI/Page/Other/FriendList.hpp>
 #include <MarioKartWii/UI/Page/Other/FriendRoom.hpp>
+#include <MarioKartWii/UI/Page/Other/YesNo.hpp>
 #include <UI/UI.hpp>
 #include <UI/ToggleControls.hpp>
 #include <MarioKartWii/RKNet/RKNetController.hpp>
@@ -22,6 +23,7 @@ public:
     RoomKickPage();
 
     void OnInit() override;
+    void BeforeEntranceAnimations() override;
     void BeforeControlUpdate() override;
 
     int GetActivePlayerBitfield() const override;
@@ -36,8 +38,9 @@ private:
     void OnButtonClick(PushButton& button, u32 hudSlotId);
     void OnButtonSelect(PushButton& button, u32 hudSlotId);
     void OnButtonDeselect(PushButton& button, u32 hudSlotId) {}
+    void OnYesNoClick(u32 choice, PushButton& button);
 
-    FriendButton miis[12];
+    PushButton miis[12];
     MiiName name;
 
     MiiGroup* miiGroup;
@@ -46,6 +49,8 @@ private:
     int playerCount;
 
     int selectedIdx;
+
+    PtmfHolder_2A<RoomKickPage, void, u32, PushButton&> onYesNoClickHandler;
 };
 
 }//namespace UI

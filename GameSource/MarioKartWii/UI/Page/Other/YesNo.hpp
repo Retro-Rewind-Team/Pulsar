@@ -21,7 +21,7 @@ public:
 
     void SetMessageBoxMsg(u32 bmgId, Text::Info* text); //806525fc
     void PrepareButton(u32 buttonId, u32 bmgId, Text::Info* text, u32 endAnimDir,
-        const PtmfHolder_2A<Page, void, u32, PushButton&> onClickPtmf); //80652604
+        const PtmfHolder_2A<Page, void, u32, PushButton&>& onClickPtmf); //80652604
     void OnButtonClick(PushButton& button, u32 hudSlotId); //80652678
     void SelectInitialButton(); //80652700
 
@@ -29,7 +29,6 @@ public:
 
 
     PtmfHolder_2A<Page, void, u32, PushButton&>* onButtonClickObj[2]; //0x44 called by OnButtonClick, 1st arg is buttonId
-    u32 unknown_0x44[2];
     ControlsManipulatorManager controlsManipulatorManager; //0x4c
     u32 clickedButtonId; //0x270
     u32 endAnimDir[2]; //0x274 animDir this page should end when a given button is clicked
@@ -45,6 +44,7 @@ size_assert(YesNo, 0x8b8);
 
 class YesNoPopUp : public YesNo { //ID 0x4e for example Choose/Random online cup select
 public:
+    static const PageId id = PAGE_VOTERANDOM_MESSAGE_BOX;
     class Container : public LayoutUIControl {
     public:
         Container(); //80652be0

@@ -28,6 +28,8 @@ RoomKickPage::RoomKickPage() {
     onButtonDeselectHandler.ptmf = &RoomKickPage::OnButtonDeselect;
     onBackPressHandler.subject = this;
     onBackPressHandler.ptmf = &RoomKickPage::OnBackPress;
+    onYesNoClickHandler.subject = this;
+    onYesNoClickHandler.ptmf = &RoomKickPage::OnYesNoClick;
 
     this->controlsManipulatorManager.Init(1, false);
     this->SetManipulatorManager(controlsManipulatorManager);
@@ -39,6 +41,13 @@ RoomKickPage::RoomKickPage() {
 void RoomKickPage::OnInit() {
     this->miiGroup = &SectionMgr::sInstance->curSection->Get<Pages::FriendRoomManager>()->miiGroup;
     Menu::OnInit();
+}
+
+void RoomKickPage::BeforeEntranceAnimations() {
+    MenuInteractable::BeforeEntranceAnimations();
+
+    this->nextPageId = PAGE_NONE;
+    this->prevPageId = PAGE_FRIEND_ROOM;
 }
 
 void RoomKickPage::BeforeControlUpdate() {
@@ -68,7 +77,12 @@ void RoomKickPage::BeforeControlUpdate() {
                 mii.SetMiiPane("chara_light_01", *this->miiGroup, this->miiIdx[idx], 2);
                 mii.SetMiiPane("chara_light_02", *this->miiGroup, this->miiIdx[idx], 2);
 
-                this->miis[idx].status = 3;
+                if (aid == sub->localAid) {
+                    this->miis[idx].animator.GetAnimationGroupById(4).PlayAnimationAtFrame(2, 0.0f);
+                } else {
+                    this->miis[idx].animator.GetAnimationGroupById(4).PlayAnimationAtFrame(1, 0.0f);
+                }
+            
                 mii.SetPaneVisibility("w_null", true);
 
                 ++idx;
@@ -96,8 +110,6 @@ UIControl* RoomKickPage::CreateControl(u32 id) {
         };
 
         this->miis[id].LoadWithAnims(anims, "button", "FriendListMii", variant, 1, 0);
-        this->miis[id].miiGroup = this->miiGroup;
-        this->miis[id].status = 3; // Friends and online
         
         this->miis[id].animator.GetAnimationGroupById(4).PlayAnimationAtFrame(1, 0.0f);
         this->miis[id].buttonId = id;
@@ -142,25 +154,41 @@ void RoomKickPage::SetButtonHandlers(PushButton& button) {
 }
 
 void RoomKickPage::OnBackPress(u32 hudSlotId) {
+    this->nextPageId = PAGE_NONE;
+    this->prevPageId = PAGE_FRIEND_ROOM;
     this->EndStateAnimated(1, 0.0f);
 }
 
+void RoomKickPage::OnYesNoClick(u32 choice, PushButton& button) {
+    if (choice == 0) {
+        DWC::CloseConnectionHard(this->aidIdx[this->selectedIdx]);
+    }
+}
+
 void RoomKickPage::OnButtonClick(PushButton& button, u32 hudSlotId) {
+
+    RKNet::Controller* controller = RKNet::Controller::sInstance;
+    RKNet::ControllerSub* sub = &controller->subs[controller->currentSub];
+
+    this->nextPageId = PAGE_NONE;
+    this->prevPageId = PAGE_FRIEND_ROOM;
+
     const u32 btnIdx = button.buttonId;
     if (btnIdx < this->playerCount) {
-        // Pages::YesNoMessageBox* msgBox = SectionMgr::sInstance->curSection->Get<Pages::YesNoMessageBox>();
+        if (sub->localAid != this->aidIdx[btnIdx]) {
+            Pages::YesNoPopUp* msgBox = SectionMgr::sInstance->curSection->Get<Pages::YesNoPopUp>();
 
-        // Text::Info info;
-        // info.miis[0] = this->miiGroup->GetMii(this->miiIdx);
-        // msgBox->Reset();
-        // msgBox->SetMessageWindowText(BMG_KICK_CONFIRM, &info);
-        // msgBox->ConfigureButton(0, BMG_YES, nullptr, 0, &this->onYesNoYesClickHandler);
-        // msgBox->ConfigureButton(1, BMG_NO, nullptr, 0, nullptr);
+            Text::Info info;
+            info.miis[0] = this->miiGroup->GetMii(this->miiIdx[this->selectedIdx]);
+            msgBox->Reset();
+            msgBox->SetMessageBoxMsg(BMG_KICK_CONFIRM, &info);
+            msgBox->PrepareButton(0, BMG_YES, nullptr, 0, this->onYesNoClickHandler);
+            msgBox->PrepareButton(1, BMG_NO, nullptr, 0, this->onYesNoClickHandler);
 
-        // msgBox->unknown_0x27c = 1; // default choice (???)
+            msgBox->initialButtonIdx = 1;
 
-        // this->AddPageLayer(Pages::YesNoMessageBox::id, 0);
-        DWC::CloseConnectionHard(this->aidIdx[this->selectedIdx]);
+            this->nextPageId = PAGE_VOTERANDOM_MESSAGE_BOX;
+        }
     }
     this->EndStateAnimated(1, 0.0f);
 }

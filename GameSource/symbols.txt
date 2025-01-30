@@ -900,6 +900,7 @@ CreatePageById__7SectionF6PageId = 0x80623390
 CreateSectionPages__7SectionF9SectionId = 0x8062c3a4
 AddInitialLayers__7SectionF9SectionId = 0x80630094
 RemoveTopLayerPage__7SectionFv = 0x80623288
+UpdateLayers__7SectionFv = 0x80623068
 
 #RKSYSRequester
 NotifyNewLicenseContent__14RKSYSRequesterFv = 0x80621410
@@ -1312,7 +1313,7 @@ transitionDelay__4Page = 0x80896830
 
 #YesNoMessageBox
 SetMessageBoxMsg__Q25Pages5YesNoFUiPQ24Text4Info = 0x806525fc
-PrepareButton__Q25Pages5YesNoFUiUiPQ24Text4InfoUi39PtmfHolder_2A<4Page,v,Ui,R10PushButton> = 0x80652604
+PrepareButton__Q25Pages5YesNoFUiUiPQ24Text4InfoUiRC39PtmfHolder_2A<4Page,v,Ui,R10PushButton> = 0x80652604
 
 #FriendRoomPage
 __ct__Q25Pages10FriendRoomFv = 0x805d7f78
