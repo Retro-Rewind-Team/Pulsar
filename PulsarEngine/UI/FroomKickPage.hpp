@@ -46,8 +46,8 @@ private:
     PtmfHolder_2A<FroomKickPage, void, PushButton&, u32> onKickDeselectHandler;
 
     // Arrays for up to 12 possible external players
-    LayoutUIControl miis[24];     // Mii icon (like in TeamSelect)
-    PushButton kickButtons[24];   // Kick arrow/button
+    LayoutUIControl miis[12];     // Mii icon (like in TeamSelect)
+    PushButton kickButtons[12];   // Kick arrow/button
     u8 arrowMiiIdx[12];           // AID stored for each slot
 
     bool isLocked;                // If we want to lock the page from changes

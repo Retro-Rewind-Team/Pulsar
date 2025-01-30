@@ -36,19 +36,12 @@ void FroomKickPage::OnInit() {
     OS::Report("FroomKickPage::OnInit() - MenuInteractable::OnInit() done\n");
 
     // Create & add our 12 Kick buttons and 12 Mii UI controls
-    for (int i = 0; i < 24; i++) {
+        for (int i = 0; i < 12; i++) { // Only 12 Miis/Kick buttons
         OS::Report("FroomKickPage::OnInit() - loop i = %d\n", i);
         // Kick button
         this->AddControl(i, this->kickButtons[i], 0);
         OS::Report("FroomKickPage::OnInit() - Added kick button at control index: %d\n", i);
-        this->kickButtons[i].Load(
-            UI::buttonFolder,         // e.g. "button"
-            "CommonButton",              // or "FroomButton" if you prefer that style
-            "Confirm",                   // variant name
-            1,                        // localPlayerBitfield
-            0,                        // r8 (unused?)
-            false                     // start hidden?
-        );
+        this->kickButtons[i].Load(UI::buttonFolder, "PULiMemberConfirmButton", "Random", 1, 0, false);
         OS::Report("FroomKickPage::OnInit() - Kick button loaded for i = %d\n", i);
         // Attach event handlers
         this->kickButtons[i].SetOnClickHandler(this->onKickClickHandler, 0);
@@ -64,7 +57,7 @@ void FroomKickPage::OnInit() {
         OS::Report("FroomKickPage::OnInit() - miiGroup pointer obtained for i = %d\n", i);
         
         // Mii icon
-        this->AddControl(i + 24, this->miis[i], 0);
+        this->AddControl(i + 12, this->miis[i], 0);
         OS::Report("FroomKickPage::OnInit() - added Mii control at index: %d\n", i + 12);
         ControlLoader loader(&this->miis[i]);
         OS::Report("FroomKickPage::OnInit() - ControlLoader constructed for i = %d\n", i);
@@ -131,11 +124,9 @@ void FroomKickPage::BeforeControlUpdate() {
         // If you maintain a global MiiGroup or if you have the friend room's MiiGroup:
         if (this->miiGroup != nullptr) { // Use this->miiGroup here
              OS::Report("FroomKickPage::BeforeControlUpdate() - miiGroup not null, displaying Mii for aid %d, displayCount %d\n", aid, displayCount);
-                this->miis[displayCount].SetMiiPane("chara",
-                    *this->miiGroup, aid * 2, 2); // Use this->miiGroup here
+                this->miis[displayCount].SetMiiPane("chara", *this->miiGroup, aid, 1);
                 OS::Report("FroomKickPage::BeforeControlUpdate() - Mii chara pane set for aid %d, displayCount %d\n", aid, displayCount);
-                this->miis[displayCount].SetMiiPane("chara_shadow",
-                    *this->miiGroup, aid * 2, 2); // Use this->miiGroup here
+                this->miis[displayCount].SetMiiPane("chara_shadow", *this->miiGroup, aid, 1); // Use this->miiGroup here
                 OS::Report("FroomKickPage::BeforeControlUpdate() - Mii chara_shadow pane set for aid %d, displayCount %d\n", aid, displayCount);
             }
         this->miis[displayCount].isHidden        = false;
@@ -154,7 +145,7 @@ void FroomKickPage::BeforeControlUpdate() {
     }
 
     // Hide the rest
-    for (int i = displayCount; i < 24; i++) {
+    for (int i = displayCount; i < 12; i++) {
         OS::Report("FroomKickPage::BeforeControlUpdate() - Hiding row %d, displayCount is %d\n", i, displayCount);
         this->miis[i].isHidden = true;
         OS::Report("FroomKickPage::BeforeControlUpdate() - Hidden Mii at row: %d\n", i);
