@@ -60,11 +60,6 @@ void RoomKickPage::BeforeControlUpdate() {
     for(int aid = 0; aid < 12; ++aid) {
         if(sub->availableAids & (1 << aid)) {
             for(int player = 0; player < sub->connectionUserDatas[aid].playersAtConsole; ++player) {
-                // LayoutUIControl& mii = this->miis[idx];
-                // mii.SetMiiPane("chara", *this->miiGroup, aid * 2 + player, 2);
-                // mii.SetMiiPane("chara_shadow", *this->miiGroup, aid * 2 + player, 2);
-                // mii.isHidden = false;
-
                 this->miiIdx[idx] = aid * 2 + player;
                 this->aidIdx[idx] = aid;
 
@@ -93,7 +88,17 @@ void RoomKickPage::BeforeControlUpdate() {
     this->playerCount = idx;
 
     for(int remIdx = idx; remIdx < 12; ++remIdx) {
-        this->miis[remIdx].isHidden = true;
+        this->miis[remIdx].isHidden = true; // Change to false if you want to display empty slots
+
+        this->miis[remIdx].SetPicturePane("chara", "no_linkmii");
+        this->miis[remIdx].SetPicturePane("chara_shadow", "no_linkmii");
+        this->miis[remIdx].SetPicturePane("chara_c_down", "no_linkmii");
+        this->miis[remIdx].SetPicturePane("chara_light_01", "no_linkmii");
+        this->miis[remIdx].SetPicturePane("chara_light_02", "no_linkmii");
+        
+        this->miis[remIdx].animator.GetAnimationGroupById(4).PlayAnimationAtFrame(0, 0.0f);
+      
+        this->miis[remIdx].SetPaneVisibility("w_null", false);
     }
 }
 
@@ -102,14 +107,14 @@ UIControl* RoomKickPage::CreateControl(u32 id) {
     char variant[0x40];
     if(id < 12) {
         this->AddControl(count, this->miis[id], 0);
-        snprintf(variant, 0x40, "ButtonMii%1d", id % 5);
+        snprintf(variant, 0x40, "KickMii%d", id);
 
         const char *anims[] = {
             "State", "Offline", "Online", "RandomMatching", "FriendParent", nullptr,
             nullptr,
         };
 
-        this->miis[id].LoadWithAnims(anims, "button", "FriendListMii", variant, 1, 0);
+        this->miis[id].LoadWithAnims(anims, "button", "KickMii", variant, 1, 0);
         
         this->miis[id].animator.GetAnimationGroupById(4).PlayAnimationAtFrame(1, 0.0f);
         this->miis[id].buttonId = id;
@@ -188,9 +193,10 @@ void RoomKickPage::OnButtonClick(PushButton& button, u32 hudSlotId) {
             msgBox->initialButtonIdx = 1;
 
             this->nextPageId = PAGE_VOTERANDOM_MESSAGE_BOX;
+
+            this->EndStateAnimated(1, 0.0f);
         }
     }
-    this->EndStateAnimated(1, 0.0f);
 }
 
 void RoomKickPage::OnButtonSelect(PushButton& button, u32 hudSlotId) {
