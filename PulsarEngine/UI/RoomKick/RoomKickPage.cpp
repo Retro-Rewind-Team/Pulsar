@@ -88,7 +88,7 @@ void RoomKickPage::BeforeControlUpdate() {
     this->playerCount = idx;
 
     for(int remIdx = idx; remIdx < 12; ++remIdx) {
-        this->miis[remIdx].isHidden = true; // Change to false if you want to display empty slots
+        this->miis[remIdx].isHidden = false;
 
         this->miis[remIdx].SetPicturePane("chara", "no_linkmii");
         this->miis[remIdx].SetPicturePane("chara_shadow", "no_linkmii");
