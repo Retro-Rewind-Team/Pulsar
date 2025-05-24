@@ -1,6 +1,6 @@
 #include <kamek.hpp>
-#include <MarioKartWii/Race/Racedata.hpp>
-#include <MarioKartWii/Race/Raceinfo/Raceinfo.hpp>
+#include <MarioKartWii/Race/RaceData.hpp>
+#include <MarioKartWii/Race/RaceInfo/RaceInfo.hpp>
 #include <MarioKartWii/Kart/KartManager.hpp>
 #include <MarioKartWii/Objects/ObjectsMgr.hpp>
 #include <MarioKartWii/KMP/KMPManager.hpp>

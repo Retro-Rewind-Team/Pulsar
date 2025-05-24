@@ -9,7 +9,7 @@
 #include <MarioKartWii/UI/Page/Other/WifiVSResults.hpp>
 #include <MarioKartWii/UI/Ctrl/CtrlRace/CtrlRaceRankNum.hpp>
 #include <MarioKartWii/UI/Ctrl/CtrlRace/CtrlRaceItemWindow.hpp>
-#include <MarioKartWii/Race/Raceinfo/Raceinfo.hpp>
+#include <MarioKartWii/Race/RaceInfo/RaceInfo.hpp>
 #include <MarioKartWii/Kart/KartManager.hpp>
 #include <Network/PacketExpansion.hpp>
 #include <Gamemodes/KO/KOMgr.hpp>

@@ -1,8 +1,8 @@
 #ifndef _EGGSYSTEM_
 #define _EGGSYSTEM_
 #include <types.hpp>
-#include <core/rvl/os/OSContext.hpp>
-#include <core/rvl/os/OSAlarm.hpp>
+#include <core/rvl/OS/OSContext.hpp>
+#include <core/rvl/OS/OSAlarm.hpp>
 #include <core/egg/mem/ExpHeap.hpp>
 #include <core/egg/Audio/AudioMgr.hpp>
 #include <core/egg/3D/XFB.hpp>

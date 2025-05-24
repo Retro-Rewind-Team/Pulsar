@@ -5,7 +5,7 @@
 #include <core/GS/GP/GP.hpp>
 #include <core/rvl/DWC/DWCAccount.hpp>
 #include <core/rvl/DWC/DWCError.hpp>
-#include <core/rvl/os/OS.hpp>
+#include <core/rvl/OS/OS.hpp>
 
 //Credit Seeky
 

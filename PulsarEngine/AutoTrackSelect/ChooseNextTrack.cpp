@@ -1,4 +1,4 @@
-#include <MarioKartWii/Race/Racedata.hpp>
+#include <MarioKartWii/Race/RaceData.hpp>
 #include <MarioKartWii/Audio/RSARPlayer.hpp>
 #include <PulsarSystem.hpp>
 #include <Network/PacketExpansion.hpp>

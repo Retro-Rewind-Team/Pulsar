@@ -1,4 +1,4 @@
-#include <MarioKartWii/Race/Raceinfo/Raceinfo.hpp>
+#include <MarioKartWii/Race/RaceInfo/RaceInfo.hpp>
 #include <MarioKartWii/UI/Page/Page.hpp>
 #include <MarioKartWii/Input/InputManager.hpp>
 #include <GameModes/KO/KOMgr.hpp>

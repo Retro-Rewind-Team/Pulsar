@@ -3,7 +3,7 @@
 #include <types.hpp>
 #include <core/nw4r/snd/SoundArchive.hpp>
 #include <core/nw4r/snd/Util.hpp>
-#include <core/rvl/nand.hpp>
+#include <core/rvl/NAND.hpp>
 
 
 

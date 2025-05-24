@@ -1,6 +1,6 @@
 #include <kamek.hpp>
 #include <MarioKartWii/KMP/KMPManager.hpp>
-#include <MarioKartWii/Race/Raceinfo/Raceinfo.hpp>
+#include <MarioKartWii/Race/RaceInfo/RaceInfo.hpp>
 #include <MarioKartWii/Kart/KartPointers.hpp>
 
 namespace Pulsar {

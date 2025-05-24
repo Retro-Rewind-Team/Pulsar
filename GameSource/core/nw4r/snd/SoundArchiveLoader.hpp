@@ -1,7 +1,7 @@
 #ifndef _NW4R_SNDSOUNDARCHIVELOADER_
 #define _NW4R_SNDSOUNDARCHIVELOADER_
 #include <types.hpp>
-#include <core/rvl/os/OSmutex.hpp>
+#include <core/rvl/OS/OSMutex.hpp>
 #include <core/nw4r/snd/SoundArchive.hpp>
 #include <core/nw4r/ut.hpp>
 #include <core/nw4r/snd/SoundHeap.hpp>

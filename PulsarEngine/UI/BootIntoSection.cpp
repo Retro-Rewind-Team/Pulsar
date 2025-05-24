@@ -1,6 +1,6 @@
 #include <kamek.hpp>
-#include <core/rvl/pad.hpp>
-#include <core/rvl/kpad.hpp>
+#include <core/rvl/PAD.hpp>
+#include <core/rvl/KPAD.hpp>
 #include <core/System/SystemManager.hpp>
 #include <MarioKartWii/Input/InputManager.hpp>
 #include <MarioKartWii/UI/Section/SectionMgr.hpp>

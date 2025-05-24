@@ -2,7 +2,7 @@
 #include <kamek.hpp>
 #include <MarioKartWii/Archive/ArchiveMgr.hpp>
 #include <MarioKartWii/Effect/EffectMgr.hpp>
-#include <MarioKartWii/Race/Racedata.hpp>
+#include <MarioKartWii/Race/RaceData.hpp>
 #include <MarioKartWii/3D/Model/MatModelDirector.hpp>
 
 namespace Pulsar {

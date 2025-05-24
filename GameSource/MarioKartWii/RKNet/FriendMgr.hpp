@@ -1,7 +1,7 @@
 #ifndef _RKNETFRIENDMGR_
 #define _RKNETFRIENDMGR_
 #include <kamek.hpp>
-#include <core/rvl/os/OSmutex.hpp>
+#include <core/rvl/OS/OSMutex.hpp>
 #include <core/rvl/DWC/DWC.hpp>
 
 namespace RKNet {

@@ -1,8 +1,8 @@
 #ifndef _EGGDVDFILE_
 #define _EGGDVDFILE_
 #include <types.hpp>
-#include <core/rvl/os/OSMutex.hpp>
-#include <core/rvl/os/OSMessage.hpp>
+#include <core/rvl/OS/OSMutex.hpp>
+#include <core/rvl/OS/OSMessage.hpp>
 #include <core/rvl/dvd/dvd.hpp>
 #include <core/nw4r/ut/List.hpp>
 

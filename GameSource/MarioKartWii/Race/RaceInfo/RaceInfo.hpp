@@ -19,8 +19,8 @@ Contributors:
 #include <MarioKartWii/System/ElineManager.hpp>
 #include <MarioKartWii/System/Random.hpp>
 #include <MarioKartWii/Input/ControllerHolder.hpp>
-#include <MarioKartWii/Race/Racedata.hpp>
-#include <MarioKartWii/Race/Raceinfo/GameModeData.hpp>
+#include <MarioKartWii/Race/RaceData.hpp>
+#include <MarioKartWii/Race/RaceInfo/GameModeData.hpp>
 
 enum RaceStage {
     RACESTAGE_INTRO,

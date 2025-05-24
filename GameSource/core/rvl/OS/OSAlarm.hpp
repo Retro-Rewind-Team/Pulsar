@@ -1,7 +1,7 @@
 #ifndef _OSALARM_
 #define _OSALARM_
 #include <types.hpp>
-#include <core/rvl/os/OSContext.hpp>
+#include <core/rvl/OS/OSContext.hpp>
 
 namespace OS {
 

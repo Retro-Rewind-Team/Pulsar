@@ -3,9 +3,9 @@
 #include <types.hpp>
 #include <core/nw4r/ut/LinkList.hpp>
 #include <core/nw4r/snd/AxManager.hpp>
-#include <core/rvl/os/OSthread.hpp>
-#include <core/rvl/os/OSMessage.hpp>
-#include <core/rvl/os/OSMutex.hpp>
+#include <core/rvl/OS/OSthread.hpp>
+#include <core/rvl/OS/OSMessage.hpp>
+#include <core/rvl/OS/OSMutex.hpp>
 
 namespace nw4r {
 namespace snd {

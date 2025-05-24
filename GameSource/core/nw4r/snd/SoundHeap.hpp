@@ -1,7 +1,7 @@
 #ifndef _NW4R_SNDHEAP_
 #define _NW4R_SNDHEAP_
 #include <types.hpp>
-#include <core/rvl/os/OSmutex.hpp>
+#include <core/rvl/OS/OSMutex.hpp>
 #include <core/nw4r/snd/FrameHeap.hpp>
 #include <core/nw4r/snd/SoundMemoryAllocatable.hpp>
 namespace  nw4r {

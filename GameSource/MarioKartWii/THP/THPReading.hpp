@@ -1,7 +1,7 @@
 #ifndef _THPREADING_
 #define _THPREADING_
 #include <kamek.hpp>
-#include <core/rvl/os/OSMessage.hpp>
+#include <core/rvl/OS/OSMessage.hpp>
 
 namespace THP {
 

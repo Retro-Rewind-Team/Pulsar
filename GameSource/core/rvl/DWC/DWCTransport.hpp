@@ -1,7 +1,7 @@
 #ifndef _DWC_TRANSPORT_ 
 #define _DWC_TRANSPORT_
 #include <types.hpp>
-#include <core/rvl/os/OS.hpp>
+#include <core/rvl/OS/OS.hpp>
 #include <core/GS/GT2/GT2.hpp>
 
 

@@ -2,7 +2,7 @@
 #include <MarioKartWii/UI/Page/RaceHUD/RaceHUD.hpp>
 #include <MarioKartWii/UI/Page/RaceMenu/GhostReplayPause.hpp>
 #include <MarioKartWii/Kart/KartManager.hpp>
-#include <MarioKartWii/Race/Raceinfo/Raceinfo.hpp>
+#include <MarioKartWii/Race/RaceInfo/RaceInfo.hpp>
 #include <UI/UI.hpp>
 
 

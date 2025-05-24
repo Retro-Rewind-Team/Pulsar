@@ -1,7 +1,7 @@
 #ifndef _OSBOOTINFO_
 #define _OSBOOTINFO_
 #include <types.hpp>
-#include <core/rvl/dvd/DVD.hpp>
+#include <core/rvl/dvd/dvd.hpp>
 
 
 namespace OS {

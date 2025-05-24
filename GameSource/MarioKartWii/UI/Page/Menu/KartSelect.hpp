@@ -5,8 +5,8 @@
 #include <MarioKartWii/UI/Page/Page.hpp>
 #include <MarioKartWii/UI/Page/Menu/Menu.hpp>
 #include <MarioKartWii/UI/Ctrl/Menu/CtrlMenuMachineGraph.hpp>
-#include <MarioKartWii/Race/racedata.hpp>
-#include <MarioKartWii/System/identifiers.hpp>
+#include <MarioKartWii/Race/RaceData.hpp>
+#include <MarioKartWii/System/Identifiers.hpp>
 #include <MarioKartWii/UI/Ctrl/ModelControl.hpp>
 #include <MarioKartWii/UI/Ctrl/CountDown.hpp>
 

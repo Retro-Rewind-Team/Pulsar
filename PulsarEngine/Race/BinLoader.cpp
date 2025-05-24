@@ -1,7 +1,7 @@
 #include <RetroRewind.hpp>
 #include <MarioKartWii/Archive/ArchiveMgr.hpp>
 #include <MarioKartWii/RKNet/RKNetController.hpp>
-#include <core/rvl/os/OS.hpp>
+#include <core/rvl/OS/OS.hpp>
 #ifdef PROD
 #include <Security/BinVerifier.hpp>
 #endif

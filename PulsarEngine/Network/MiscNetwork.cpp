@@ -2,7 +2,7 @@
 #include <MarioKartWii/RKNet/RKNetController.hpp>
 #include <MarioKartWii/RKNet/Select.hpp>
 #include <MarioKartWii/System/random.hpp>
-#include <MarioKartWii/Race/Racedata.hpp>
+#include <MarioKartWii/Race/RaceData.hpp>
 #include <MarioKartWii/UI/Section/SectionMgr.hpp>
 #include <Settings/Settings.hpp>
 #include <Network/PulSELECT.hpp>

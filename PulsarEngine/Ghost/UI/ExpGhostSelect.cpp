@@ -1,5 +1,5 @@
-#include <MarioKartWii/Race/Racedata.hpp>
-#include <MarioKartWii/Race/Raceinfo/Raceinfo.hpp>
+#include <MarioKartWii/Race/RaceData.hpp>
+#include <MarioKartWii/Race/RaceInfo/RaceInfo.hpp>
 #include <MarioKartWii/Input/InputManager.hpp>
 #include <MarioKartWii/UI/Page/Menu/CourseSelect.hpp>
 #include <Ghost/UI/ExpGhostSelect.hpp>

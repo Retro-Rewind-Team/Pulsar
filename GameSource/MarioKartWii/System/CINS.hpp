@@ -1,7 +1,7 @@
 #ifndef _CHANNELINSTALLER_
 #define _CHANNELINSTALLER_
 #include <kamek.hpp>
-#include <core/rvl/os/OSTitle.hpp>
+#include <core/rvl/OS/OSTitle.hpp>
 #include <core/egg/mem/Disposer.hpp>
 #include <core/egg/mem/Heap.hpp>
 

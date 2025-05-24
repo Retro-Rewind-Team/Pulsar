@@ -4,7 +4,7 @@
 #include <kamek.hpp>
 #include <MarioKartWii/Archive/ArchiveMgr.hpp>
 #include <Network/SHA256.hpp>
-#include <core/rvl/os/OS.hpp>
+#include <core/rvl/OS/OS.hpp>
 
 namespace RetroRewind {
 

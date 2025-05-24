@@ -1,11 +1,11 @@
 #include <kamek.hpp>
 #include <core/System/SystemManager.hpp>
 #include <core/rvl/base/ppc.hpp>
-#include <core/rvl/os/OSthread.hpp>
-#include <core/rvl/os/OSTitle.hpp>
-#include <core/rvl/os/OSBootInfo.hpp>
-#include <core/rvl/pad.hpp>
-#include <core/rvl/kpad.hpp>
+#include <core/rvl/OS/OSthread.hpp>
+#include <core/rvl/OS/OSTitle.hpp>
+#include <core/rvl/OS/OSBootInfo.hpp>
+#include <core/rvl/PAD.hpp>
+#include <core/rvl/KPAD.hpp>
 #include <core/egg/Exception.hpp>
 #include <Debug/Debug.hpp>
 #include <PulsarSystem.hpp>

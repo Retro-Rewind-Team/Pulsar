@@ -2,8 +2,8 @@
 #define _RACEAUDIOMGR_
 #include <kamek.hpp>
 #include <core/nw4r/ut/List.hpp>
-#include <MarioKartWii/Race/racedata.hpp>
-#include <MarioKartWii/System/timer.hpp>
+#include <MarioKartWii/Race/RaceData.hpp>
+#include <MarioKartWii/System/Timer.hpp>
 #include <MarioKartWii/Audio/Other/AudioValues.hpp>
 #include <MarioKartWii/Audio/Actors/KartActor.hpp>
 /*
