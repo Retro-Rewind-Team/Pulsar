@@ -2,12 +2,7 @@
 #include <core/rvl/ipc/ipc.hpp>
 
 namespace Pulsar {
-
-#define O_RDONLY                0
-#define O_WRONLY                1
-#define O_RDWR                  2
-#define O_APPEND                0x0008
-#define O_CREAT                 0x0200
+    
 #define S_IFDIR                 0040000 /* st_mode is directory */
 #define S_IFMT                  0170000 /* st_mode filetype mask */
 #define SD_MAX_FILENAME_LENGTH  768     /* filename length limit imposed by sd driver */

@@ -16,6 +16,10 @@
 
 
 namespace Pulsar {
+
+bool IsNewChannel();
+bool NewChannel_UseSeparateSavegame();
+
 namespace KO {
 class Mgr;
 }//namespace KO
