@@ -70,19 +70,19 @@ static void ManageMultipleTricks() {
             ControllerType controllerType = controller.curController->GetType();
             switch (controllerType) {
                 case WHEEL:
-                    trickButtonPressed = (controller.inputStates[0].buttonRaw & WPAD::WPAD_BUTTON_UP) != 0;
+                    trickButtonPressed = (controller.inputStates[0].buttonRaw & WPAD::WPAD_BUTTON_B) != 0;
                     break;
                 case NUNCHUCK:
-                    trickButtonPressed = (controller.inputStates[0].buttonRaw & WPAD::WPAD_BUTTON_UP) != 0;
+                    trickButtonPressed = (controller.inputStates[0].buttonRaw & WPAD::WPAD_BUTTON_B) != 0;
                     break;
                 case CLASSIC:
-                    trickButtonPressed = (controller.inputStates[0].buttonRaw & WPAD::WPAD_CL_BUTTON_UP) != 0;
+                    trickButtonPressed = (controller.inputStates[0].buttonRaw & WPAD::WPAD_CL_TRIGGER_R) != 0;
                     break;
                 case GCN:
-                    trickButtonPressed = (controller.inputStates[0].buttonRaw & PAD::PAD_BUTTON_UP) != 0;
+                    trickButtonPressed = (controller.inputStates[0].buttonRaw & PAD::PAD_BUTTON_R) != 0;
                     break;
                 default:
-                    trickButtonPressed = (controller.inputStates[0].buttonRaw & WPAD::WPAD_BUTTON_UP) != 0;
+                    trickButtonPressed = (controller.inputStates[0].buttonRaw & WPAD::WPAD_BUTTON_B) != 0;
                     break;
             }
             
