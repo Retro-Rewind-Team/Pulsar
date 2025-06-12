@@ -2101,3 +2101,5 @@ AwardRename = 0x80897dee
 
 TryStart__Q24Kart5TrickFRC4Vec3 = 0x80575d7c
 Activate__Q24Kart5BoostFUis = 0x80588db0
+EndTrick__Q24Kart8MovementFv = 0x8057f7a8
+End__Q24Kart5TrickFv = 0x805766b8

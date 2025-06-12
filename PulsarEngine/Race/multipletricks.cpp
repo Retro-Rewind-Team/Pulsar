@@ -1,3 +1,10 @@
+// MultipleTricks.cpp – Pulsar
+// ----------------------------------------------------
+// This version has been redesigned to be more robust.
+// It constantly forces the "trickable" state while airborne,
+// allowing for multiple tricks to be performed back-to-back.
+// ----------------------------------------------------
+
 #include <kamek.hpp>
 #include <MarioKartWii/Kart/KartManager.hpp>
 #include <MarioKartWii/Race/RaceData.hpp>
@@ -11,83 +18,88 @@
 namespace Pulsar {
 namespace Race {
 
-// This structure holds the state for our custom trick handling logic.
+/*---------------- Tunables ----------------*/
+// No tunables needed for this simpler implementation
+
+/*------------ Per-player state ------------*/
 struct MultiTrickState {
-    // True if a player has performed a trick and is owed a boost.
-    // This is necessary because we manually clear the game's trick flag.
     bool awaitingLandingBoost[12];
-
-    // Stores the previous frame's airtime for each player to detect the moment of landing.
-    u32 prevAirtime[12];
 };
-static MultiTrickState trickState;
+static MultiTrickState gState;
 
-// This hook runs once at the beginning of a race to initialize our state.
+/*-------------- Init on race load ---------*/
 static void InitMultiTrickState() {
     for (int i = 0; i < 12; ++i) {
-        trickState.awaitingLandingBoost[i] = false;
-        trickState.prevAirtime[i] = 0;
+        gState.awaitingLandingBoost[i] = false;
     }
 }
-static RaceLoadHook InitStateHook(InitMultiTrickState);
+static RaceLoadHook _sInitHook(InitMultiTrickState);
 
-// This frame hook manages the trick state while airborne and upon landing.
+/*-------------- Main per-frame hook -------*/
 static void ManageMultipleTricks() {
-    Racedata* racedata = Racedata::sInstance;
-    Kart::Manager* kartManager = Kart::Manager::sInstance;
-    if (!racedata || !kartManager) return;
 
-    const u8 playerCount = racedata->racesScenario.playerCount;
+    Racedata* race  = Racedata::sInstance;
+    Kart::Manager* karts = Kart::Manager::sInstance;
+    if (!race || !karts) return;
+
+    const u8 playerCount = race->racesScenario.playerCount;
+
     for (u8 i = 0; i < playerCount; ++i) {
-        Kart::Player* player = kartManager->GetKartPlayer(i);
+
+        Kart::Player* player = karts->GetKartPlayer(i);
         if (!player) continue;
 
-        Kart::Status* status = player->pointers.kartStatus;
+        Kart::Status*   status   = player->pointers.kartStatus;
         Kart::Movement* movement = player->pointers.kartMovement;
         if (!status || !movement) continue;
 
         Kart::Trick* trick = movement->trick;
         if (!trick) continue;
-        
-        bool isInTrickState = (status->bitfield1 & 0x40) != 0;
 
-        // Part A: Handle airborne logic
+        const bool inTrick = (status->bitfield1 & 0x40) != 0;
+
+        /*============  WHILE AIRBORNE  ============*/
         if (status->airtime > 0) {
-            // Check if the player is in the post-trick "limbo" state (trick done, but flag still set).
-            if (isInTrickState && trick->cooldown <= 0) {
-                // Manually clear the game's trick flag to allow another trick.
-                status->bitfield1 &= ~0x40;
-                
-                // Since we cleared the flag, the game won't give a boost. We must do it.
-                trickState.awaitingLandingBoost[i] = true;
-                
-                // Re-evaluate the flag now that we've cleared it.
-                isInTrickState = false;
-            }
-
-            // If the player is in a neutral airborne state (not in a trick, cooldown is over),
-            // make them trickable. This allows the first trick and any subsequent tricks.
-            if (!isInTrickState && trick->cooldown <= 0 && status->trickableTimer <= 0) {
+            
+            // If we are airborne but NOT currently in a trick animation,
+            // we will FORCE the game to allow a trick on every single frame.
+            // This is the key to allowing tricks at any time.
+            if (!inTrick) {
                 status->trickableTimer = 2;
             }
-        }
-        // Part B: Handle landing logic
-        else if (status->airtime == 0 && trickState.prevAirtime[i] > 0) {
-            // The player has just landed (airtime was > 0 last frame, is 0 now).
-            // Give them a boost if our flag is set. The vanilla boost from the last trick is also
-            // given here, but since we manage the state, we ensure only one boost is applied.
-            if (trickState.awaitingLandingBoost[i]) {
-                movement->boost.Activate(4, 30); // Standard trick boost (type 4, 30 frames).
-                trickState.awaitingLandingBoost[i] = false;
+
+            // A trick animation has just finished mid-air.
+            if (inTrick && trick->nextTimer <= 0) {
+                // 1. Clean up the state of the just-finished trick (e.g. reset kart rotation).
+                // We use the lower-level trick->End() to avoid vanilla's landing logic.
+                trick->End();
+
+                // 2. Clear the "in trick" flag. On the very next frame, the `!inTrick`
+                // block above will execute, re-enabling `trickableTimer` immediately.
+                status->bitfield1 &= ~0x40;
+
+                // 3. Ensure no cooldown prevents the next trick.
+                trick->cooldown = 0;
+
+                // 4. Flag that a boost should be given when the kart lands. This will
+                // accumulate for every trick performed in the air.
+                gState.awaitingLandingBoost[i] = true;
             }
         }
         
-        // Store the current airtime to detect landing on the next frame.
-        trickState.prevAirtime[i] = status->airtime;
+        // This check is outside the airtime > 0 block to correctly detect landing.
+        bool justLanded = (status->bitfield0 & 0x200) != 0;
+
+        if (justLanded) {
+            if (gState.awaitingLandingBoost[i]) {
+                // The vanilla boost (type 4) has a length of 30 frames.
+                movement->boost.Activate(4, 30);
+                gState.awaitingLandingBoost[i] = false;
+            }
+        }
     }
 }
-
-static RaceFrameHook MultipleTricksHook(ManageMultipleTricks);
+static RaceFrameHook _sFrameHook(ManageMultipleTricks);
 
 } // namespace Race
 } // namespace Pulsar
