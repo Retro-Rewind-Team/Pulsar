@@ -2098,3 +2098,6 @@ FontRename = 0x808904B2
 RaceRename = 0x80897ddf
 CommonRename = 0x80890491
 AwardRename = 0x80897dee
+
+TryStart__Q24Kart5TrickFRC4Vec3 = 0x80575d7c
+Activate__Q24Kart5BoostFUis = 0x80588db0
