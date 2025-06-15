@@ -16,6 +16,7 @@
 
 
 namespace Pulsar {
+
 namespace KO {
 class Mgr;
 }//namespace KO

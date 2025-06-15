@@ -10,6 +10,7 @@
 #include <Debug/Debug.hpp>
 #include <PulsarSystem.hpp>
 #include <IO/IO.hpp>
+#include <RetroRewindChannel.hpp>
 
 namespace Pulsar {
 namespace Debug {
@@ -29,13 +30,7 @@ void FatalError(const char* string) {
 
 #pragma suppress_warnings on
 void LaunchSoftware() { //If dolphin, restarts game, else launches Riivo->HBC->OHBC->WiiMenu
-    s32 result = IO::OpenFix("/dev/dolphin", IOS::MODE_NONE);
-    if(result >= 0) {
-        IOS::Close(result);
-        SystemManager::Shutdown();
-        return;
-    }
-    result = IO::OpenFix("/title/00010001/57524554/content/title.tmd\0", IOS::MODE_NONE); //Riivo
+    s32 result = IO::OpenFix("/title/00010001/57524554/content/title.tmd\0", IOS::MODE_NONE); //Riivo
     if(result >= 0) {
         ISFS::Close(result);
         OS::__LaunchTitle(0x00010001, 0x57524554);
@@ -51,6 +46,12 @@ void LaunchSoftware() { //If dolphin, restarts game, else launches Riivo->HBC->O
     if(result >= 0) {
         ISFS::Close(result);
         OS::__LaunchTitle(0x00010001, 0x48424330);
+        return;
+    }
+    result = IO::OpenFix("/dev/dolphin", IOS::MODE_NONE);
+    if(result >= 0 && !IsNewChannel()) {
+        IOS::Close(result);
+        SystemManager::Shutdown();
         return;
     }
     OS::__LaunchTitle(0x1, 0x2); // Launch Wii Menu if channel isn't found
@@ -115,12 +116,15 @@ static void WriteHeaderCrash(u16 error, const OS::Context* context, u32 dsisr, u
     exception.displayedInfo = 0x23;
     exception.callbackArgs = nullptr;
 
-    //char endMsg[512];
-    //snprintf(endMsg, 512, "Press A%s and send a clip\nof the crash or the crash.pul file to the pack\ncreator to help fix the bug.\n", outcome);
-
-    db::Exception_Printf_("Press A to exit. Send crash.pul to the creator.");
-    db::PrintContext_(error, context, dsisr, dar);
-
+    if(IsNewChannel()) {
+        // just "hide" the console/xfb
+        db::DirectPrint_ChangeXfb((void*)0, 0, 0);
+        // we just set the flag, generate dump file and return to the channel
+        NewChannel_SetCrashFlag();
+    } else {
+        db::Exception_Printf_("Press A to exit. Send Crash.pul to the creator.\n");
+        db::PrintContext_(error, context, dsisr, dar);
+    }
 }
 kmCall(0x80023484, WriteHeaderCrash);
 
@@ -148,7 +152,7 @@ static void CreateCrashFile(s32 channel, KPAD::Status buff[], u32 count) {
                 }
             }
         }
-        if(exit) {
+        if(exit || IsNewChannel()) {
             OS::Thread* thread = crashThread;
             OS::DetachThread(thread);
             OS::CancelThread(thread);
@@ -179,7 +183,7 @@ static void CreateCrashFile(s32 channel, KPAD::Status buff[], u32 count) {
             io->Close();
         }
     }
-    if(exit) LaunchSoftware();
+    if(exit || IsNewChannel()) LaunchSoftware();
 }
 kmCall(0x80226610, CreateCrashFile);
 

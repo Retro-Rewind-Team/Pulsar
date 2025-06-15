@@ -421,6 +421,14 @@ Open__4NANDFPCcPQ24NAND8FileInfoUc = 0x8019c800
 Close__4NANDFPQ24NAND8FileInfo = 0x8019ca80
 GenerateAbsPath__4nandFPcPCc = 0x8019e020
 
+#NAND readrksys 2ns instructions
+ReadRKSYS2ndInst__7NandMgrFPvUiUib = 0x8052c0b4
+CheckRKSYSLength2ndInst__7NandMgrFUi = 0x8052c210
+WriteToRKSYS2ndInst__7NandMgrFPCvUiUib = 0x8052c2d4
+CreateRKSYS2ndInst__7NandMgrFUi = 0x8052c68c
+DeleteRKSYS2ndInst__7NandMgrFUib = 0x8052c7e8
+
+
 #KPAD
 Read__4KPADFiPQ24KPAD6StatusUi = 0x80197380
 
