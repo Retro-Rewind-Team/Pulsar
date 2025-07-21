@@ -79,7 +79,6 @@ static void BeforeROOMSend(RKNet::PacketHolder<PulROOM>* packetHolder, PulROOM* 
             | (ottOnline == OTTSETTING_ONLINE_FEATHER) << PULSAR_FEATHER // ott feather
             | (settings.GetSettingValue(Settings::SETTINGSTYPE_OTT, SETTINGOTT_ALLOWUMTS) ^ true) << PULSAR_UMTS // ott umts
             | koSetting << PULSAR_MODE_KO
-            | (settings.GetSettingValue(Settings::SETTINGSTYPE_HOST, SETTINGHOST_ALLOW_MIIHEADS) ^ true) << PULSAR_MIIHEADS
             | charRestrictLight << PULSAR_CHARRESTRICTLIGHT
             | charRestrictMid << PULSAR_CHARRESTRICTMID
             | charRestrictHeavy << PULSAR_CHARRESTRICTHEAVY
@@ -99,6 +98,7 @@ static void BeforeROOMSend(RKNet::PacketHolder<PulROOM>* packetHolder, PulROOM* 
         destPacket->hostSystemContext2 |= transmissionInside << PULSAR_TRANSMISSIONINSIDE
             | transmissionOutside << PULSAR_TRANSMISSIONOUTSIDE
             | transmissionVanilla << PULSAR_TRANSMISSIONVANILLA
+            | settings.GetSettingValue(Settings::SETTINGSTYPE_HOST, SETTINGHOST_ALLOW_MIIHEADS) << PULSAR_MIIHEADS
             | itemModeRandom << PULSAR_ITEMMODERANDOM
             | itemModeBlast << PULSAR_ITEMMODEBLAST
             | itemModeNone << PULSAR_ITEMMODENONE
