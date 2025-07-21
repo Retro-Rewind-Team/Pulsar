@@ -17,6 +17,7 @@ enum DolphinIOCTL {
     IOCTL_DOLPHIN_DISCORD_SET_PRESENCE = 0x08,
     IOCTL_DOLPHIN_DISCORD_RESET = 0x09,
     IOCTL_DOLPHIN_GET_SYSTEM_TIME = 0x0A,
+    IOCTL_DOLPHIN_GET_ROOM_PARAM = 0x0B,
 };
 
 /**
@@ -115,6 +116,20 @@ bool ResetDiscord();
  * @return Indicates success or failure
  */
 bool GetSystemTime(u64& systemTime);
+
+/**
+ * @brief Get the room parameter from Dolphin
+ * @param roomId Output string for room ID
+ * @param length Length of the output string buffer
+ * @return Indicates success or failure
+ */
+bool GetRoomParameter(char* roomId, u32 length);
+
+/**
+ * @brief Check if room parameter is available
+ * @return Indicates if room parameter was provided to Dolphin
+ */
+bool HasRoomParameter();
 
 } // namespace Dolphin
 

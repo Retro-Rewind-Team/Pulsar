@@ -160,7 +160,7 @@ bool ResetDiscord() {
         (IOS::IOCtlType)IOCTL_DOLPHIN_DISCORD_RESET,
         0,
         0,
-        nullptr) >= 0;
+        0) >= 0;
 }
 
 bool GetSystemTime(u64& systemTime) {
@@ -178,6 +178,58 @@ bool GetSystemTime(u64& systemTime) {
         0,
         1,
         &request) >= 0;
+}
+
+bool GetRoomParameter(char* roomId, u32 length) {
+    if (OpenDolphin() < 0) {
+        return false;
+    }
+
+    if (roomId == 0 || length == 0) {
+        return false;
+    }
+
+    IOS::IOCtlvRequest request;
+    request.address = roomId;
+    request.size = length;
+
+    s32 ret = IOS::IOCtlv(
+        s_dolphinFD,
+        (IOS::IOCtlType)IOCTL_DOLPHIN_GET_ROOM_PARAM,
+        0,
+        1,
+        &request);
+
+    if (ret >= 0) {
+        // Ensure null termination
+        roomId[length - 1] = '\0';
+        return true;
+    }
+
+    return false;
+}
+
+bool HasRoomParameter() {
+    if (OpenDolphin() < 0) {
+        return false;
+    }
+
+    // Try to get a room parameter with a small buffer to check availability
+    char testBuffer[2];
+    IOS::IOCtlvRequest request;
+    request.address = testBuffer;
+    request.size = sizeof(testBuffer);
+
+    s32 ret = IOS::IOCtlv(
+        s_dolphinFD,
+        (IOS::IOCtlType)IOCTL_DOLPHIN_GET_ROOM_PARAM,
+        0,
+        1,
+        &request);
+
+    // If the call succeeds or fails with a buffer size issue, parameter exists
+    // If it fails with "not found" or similar, parameter doesn't exist
+    return ret >= 0;
 }
     
 }
