@@ -111,20 +111,6 @@ Kart::Movement::CannonParams* ApplyCANN(Kart::Movement::CannonParams* cannonPtr,
 kmCall(0x805850b8, ApplyCANN);
 kmWrite32(0x805850bc, 0x60000000);
 
-
-
-u32 ApplySET1TimeLimit(const Racedata& racedata) {
-    u32 hiTime = 0x50000; //default
-    SET1* set = Pulsar::System::sInstance->lecodeMgr.lexMgr.set1;
-    if(set != nullptr) {
-        const GameMode mode = racedata.racesScenario.settings.gamemode;
-        if(mode == MODE_PRIVATE_VS || mode == MODE_PUBLIC_VS) hiTime = set->onlineTime * 1000 + 0x93e0; //the game subtracts that after
-    }
-    asm(lwz r5, 0x0004 (r31)); //default, make this volatile if another func is called
-    return hiTime;
-}
-kmCall(0x8053f3b8, ApplySET1TimeLimit);
-
 //If extracting, position will be obj->position, if filling, position will be a copy of obj->position which may have been divided by the SET1 factors
 void* ModifyItemPos(s16* packet) {
     register Item::Obj* obj;
