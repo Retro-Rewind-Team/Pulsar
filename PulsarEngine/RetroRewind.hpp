@@ -6,6 +6,7 @@
 
 extern u32 FPSPatchHook;
 extern u32 PredictionHook;
+extern u32 ItemRainOnlineFixHook;
 extern u32 BloomHook;
 extern u8 FontRename;
 extern u8 RaceRename;
