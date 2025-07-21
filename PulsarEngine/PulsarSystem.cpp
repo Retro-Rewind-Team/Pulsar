@@ -15,6 +15,7 @@
 #include <core/egg/DVD/DvdRipper.hpp>
 #include <MarioKartWii/UI/Page/Other/FriendList.hpp>
 #include <RetroRewindChannel.hpp>
+#include <Dolphin/DolphinIOS.hpp>
 
 namespace Pulsar {
 
@@ -48,25 +49,23 @@ System::System() :
 
 void System::Init(const ConfigFile& conf) {
     IOType type = IOType_ISO;
+    bool isDolphin = Dolphin::IsEmulator();
     s32 ret = IO::OpenFix("file", IOS::MODE_NONE);
-    if(ret >= 0) {
-        IOS::Close(ret);
-    }
-    s32 dolphin_ret = IO::OpenFix("/dev/dolphin", IOS::MODE_NONE);
-    if(dolphin_ret >= 0) {
-        IOS::Close(dolphin_ret);
-    }
 
-    if(ret >= 0 && dolphin_ret == -1) {
+    if(ret >= 0 && !IsNewChannel()) {
         type = IOType_RIIVO;
         IOS::Close(ret);
     }
-    else if (IsNewChannel() && dolphin_ret == -1) {
+    else if (IsNewChannel() && !isDolphin) {
         NewChannel_SetLoadedFromRRFlag();
         type = IOType_SD;
     }
-    else if(dolphin_ret != -1) {
-        type = IOType_DOLPHIN;
+    else {
+        ret = IO::OpenFix("/dev/dolphin", IOS::MODE_NONE);
+        if(isDolphin) {
+            type = IOType_DOLPHIN;
+            IOS::Close(ret);
+        }
     }
 
     strncpy(this->modFolderName, conf.header.modFolderName, IOS::ipcMaxFileName);
@@ -384,7 +383,7 @@ kmRegionWrite32(0x80604094, 0x4800001c, 'E');
 kmWrite32(0x800017D0, 0x0A);
 
 //Retro Rewind Internal Version
-kmWrite32(0x800017D4, 619);
+kmWrite32(0x800017D4, 623);
 
 const char System::pulsarString[] = "/Pulsar";
 const char System::CommonAssets[] = "/CommonAssets.szs";
