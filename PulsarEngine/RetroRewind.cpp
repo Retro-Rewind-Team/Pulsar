@@ -62,11 +62,14 @@ kmWrite32(0x8055422C, 0x48000044);
 
 void FPSPatch() {
   FPSPatchHook = 0x00;
-  bool isDolphin = Dolphin::IsEmulator();
   const RacedataScenario& scenario = Racedata::sInstance->racesScenario;
+  const GameMode mode = scenario.settings.gamemode;
+  bool isDolphin = Dolphin::IsEmulator();
+  bool froom = RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_NONHOST || RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_FROOM_HOST || RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_NONE;
+  bool isTimeTrial = mode == MODE_TIME_TRIAL;
   u32 localPlayerCount = scenario.localPlayerCount;
   if (static_cast<Pulsar::FPS>(Pulsar::Settings::Mgr::Get().GetUserSettingValue(static_cast<Pulsar::Settings::UserType>(Pulsar::Settings::SETTINGSTYPE_RR), Pulsar::SETTIGNRR_RADIO_FPS)) == Pulsar::FPS_HALF || (localPlayerCount > 1 && !isDolphin) ||
-      (Pulsar::System::sInstance->IsContext(Pulsar::PULSAR_ITEMMODERAIN) && !isDolphin) || (Pulsar::System::sInstance->IsContext(Pulsar::PULSAR_ITEMMODESTORM) && !isDolphin)) {
+      (Pulsar::System::sInstance->IsContext(Pulsar::PULSAR_ITEMMODERAIN) && !isDolphin && froom) || (Pulsar::System::sInstance->IsContext(Pulsar::PULSAR_ITEMMODESTORM) && !isDolphin && froom)) {
       FPSPatchHook = 0x00FF0100;
   }
 }
@@ -75,7 +78,7 @@ static PageLoadHook PatchFPS(FPSPatch);
 void ItemBoxRespawn(Objects::Itembox* itembox) {
   bool is200 = Racedata::sInstance->racesScenario.settings.engineClass == CC_100 && RKNet::Controller::sInstance->roomType != RKNet::ROOMTYPE_VS_WW;
   bool isFastRespawn = Pulsar::System::sInstance->IsContext(Pulsar::PULSAR_ITEMBOXRESPAWN) ? Pulsar::ITEMBOX_DEFAULTRESPAWN : Pulsar::ITEMBOX_FASTRESPAWN;
-  itembox->respawnTime = 180;
+  itembox->respawnTime = 150;
   itembox->isActive = 0;
   if (isFastRespawn == Pulsar::ITEMBOX_DEFAULTRESPAWN || is200) {
     itembox->respawnTime = 75;
