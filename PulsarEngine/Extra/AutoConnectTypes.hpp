@@ -55,6 +55,9 @@ enum AutoConnectError {
     ERROR_NETWORK_ERROR,               // General network error
     ERROR_AUTHENTICATION_FAILED,       // Failed to authenticate with room
     ERROR_INCOMPATIBLE_VERSION,        // Version mismatch with room
+    ERROR_CONNECTION_IN_PROGRESS,      // Connection attempt already in progress
+    ERROR_CONNECTION_CANCELLED,        // Connection attempt was cancelled
+    ERROR_ALREADY_CONNECTED,           // Already connected to a room
     
     // System errors
     ERROR_NOT_IN_DOLPHIN,              // Not running in Dolphin emulator

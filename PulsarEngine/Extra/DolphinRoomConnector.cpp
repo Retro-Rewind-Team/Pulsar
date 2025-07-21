@@ -2,6 +2,7 @@
 #include <Dolphin/DolphinIOS.hpp>
 #include <Extra/AutoConnectValidation.hpp>
 #include <Extra/LicenseSlotManager.hpp>
+#include <Extra/RoomConnectionHandler.hpp>
 
 // Simple string copy function since standard library isn't available
 static void StringCopy(char* dest, const char* src, u32 maxLen) {
@@ -220,6 +221,53 @@ bool DolphinRoomConnector::IsSystemReady() const {
 
     // System is ready if we've passed basic initialization
     return true;
+}
+
+bool DolphinRoomConnector::AttemptRoomConnection() {
+    // Check if we're enabled and ready
+    if (!IsEnabled()) {
+        SetError(ERROR_NOT_IN_DOLPHIN);
+        return false;
+    }
+
+    if (!IsSystemReady()) {
+        SetError(ERROR_SYSTEM_NOT_READY);
+        return false;
+    }
+    
+    // Check if we have a room ID
+    if (config.roomId[0] == '\0') {
+        SetError(ERROR_ROOM_ID_EMPTY);
+        return false;
+    }
+    
+    // Update connection state
+    SetConnectionState(CONNECTION_CONNECTING);
+    
+    // Get room connection handler
+    RoomConnectionHandler& handler = RoomConnectionHandler::GetInstance();
+    
+    // Initialize handler if needed
+    if (!handler.Initialize()) {
+        SetError(ERROR_INITIALIZATION_FAILED);
+        SetConnectionState(CONNECTION_FAILED);
+        return false;
+    }
+    
+    // Attempt to connect to room
+    ConnectionResult result = handler.ConnectToRoom(config.roomId, config.connectionTimeout);
+    
+    // Process connection result
+    if (result.finalState == CONNECTION_SUCCESS) {
+        // Connection successful
+        SetConnectionState(CONNECTION_SUCCESS);
+        return true;
+    } else {
+        // Connection failed
+        SetError(result.errorCode);
+        SetConnectionState(CONNECTION_FAILED);
+        return false;
+    }
 }
 
 } // namespace AutoConnect

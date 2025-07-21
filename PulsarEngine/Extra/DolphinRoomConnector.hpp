@@ -119,6 +119,17 @@ private:
      * @return true if system is ready, false otherwise
      */
     bool IsSystemReady() const;
+    
+    /**
+     * @brief Attempt to connect to a room using stored room ID
+     * 
+     * Uses the RoomConnectionHandler to connect to the room
+     * specified in the configuration. This includes validating
+     * the room ID, initiating the connection, and handling the result.
+     * 
+     * @return true if connection successful, false otherwise
+     */
+    bool AttemptRoomConnection();
 
     // Member variables
     RoomConnectionConfig config;        // Current connection configuration
