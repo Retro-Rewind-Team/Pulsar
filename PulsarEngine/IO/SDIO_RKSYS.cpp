@@ -160,7 +160,7 @@ namespace Pulsar
             return nm->CreateRKSYS2ndInst(length);
         }
     }
-    kmBranch(0x8052c68c, SDIO_CreateRKSYS);
+    //kmBranch(0x8052c68c, SDIO_CreateRKSYS);
 
     NandUtils::Result SDIO_DeleteRKSYS(NandMgr* nm, u32 length, bool r5) // 8052c7e4
     {
