@@ -8,17 +8,14 @@
   This code does not support Unit tests, therefor you should NEVER WRITE ONE!!!!
   - _Requirements: 1.1, 1.2, 1.3, 5.4_
 
-- [-] 2. Create core auto-connection data structures and enums
-
-
-
+- [x] 2. Create core auto-connection data structures and enums
   - Learn and write small documentation file on how the connection stuff works, dont actually mess with it since it already exists, if needed you can write a small wrapper around it but NEVER change original code
   - Implement basic validation functions for room ID format
   - Add error code definitions for different failure scenarios
   This code does not support Unit tests, therefor you should NEVER WRITE ONE!!!!
   - _Requirements: 1.2, 4.4_
 
-- [ ] 3. Implement DolphinRoomConnector main coordinator class
+- [x] 3. Implement DolphinRoomConnector main coordinator class
   - Create DolphinRoomConnector.hpp with class definition
   - Implement Initialize() method for system setup
   - Add ProcessRoomParameter() method for reading Dolphin input
