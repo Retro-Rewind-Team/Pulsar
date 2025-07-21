@@ -1,6 +1,7 @@
 #include <Extra/DolphinRoomConnector.hpp>
 #include <Dolphin/DolphinIOS.hpp>
 #include <Extra/AutoConnectValidation.hpp>
+#include <Extra/LicenseSlotManager.hpp>
 
 // Simple string copy function since standard library isn't available
 static void StringCopy(char* dest, const char* src, u32 maxLen) {
@@ -164,7 +165,47 @@ void DolphinRoomConnector::SetError(AutoConnectError error) {
     }
 }
 
+bool DolphinRoomConnector::SelectAndLoginLicense() {
+    if (!IsEnabled()) {
+        SetError(ERROR_NOT_IN_DOLPHIN);
+        return false;
+    }
 
+    if (!IsSystemReady()) {
+        SetError(ERROR_SYSTEM_NOT_READY);
+        return false;
+    }
+
+    // Update connection state
+    SetConnectionState(CONNECTION_SELECTING_LICENSE);
+    
+    // Get license manager instance
+    LicenseSlotManager& licenseManager = LicenseSlotManager::GetInstance();
+    
+    // Initialize license manager if needed
+    if (!licenseManager.Initialize()) {
+        SetError(ERROR_LICENSE_SELECTION_FAILED);
+        return false;
+    }
+    
+    // Select an available license slot
+    u8 selectedSlot = 0xFF;
+    if (!licenseManager.SelectAvailableSlot(config.targetLicenseSlot, selectedSlot)) {
+        SetError(ERROR_NO_AVAILABLE_SLOTS);
+        return false;
+    }
+    
+    // Attempt to log in to the selected slot
+    if (!licenseManager.AutoLogin(selectedSlot)) {
+        SetError(ERROR_AUTO_LOGIN_FAILED);
+        return false;
+    }
+    
+    // Update configuration with selected slot
+    config.targetLicenseSlot = selectedSlot;
+    
+    return true;
+}
 
 bool DolphinRoomConnector::IsSystemReady() const {
     // Check if we're initialized

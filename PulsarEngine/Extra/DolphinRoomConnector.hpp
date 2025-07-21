@@ -104,7 +104,15 @@ private:
      */
     void SetError(AutoConnectError error);
 
-
+    /**
+     * @brief Attempt to select and log in to a license slot
+     * 
+     * Selects an appropriate license slot based on configuration
+     * and attempts to log in to it automatically.
+     * 
+     * @return true if license selection and login successful, false otherwise
+     */
+    bool SelectAndLoginLicense();
 
     /**
      * @brief Check if system is ready for auto-connection
