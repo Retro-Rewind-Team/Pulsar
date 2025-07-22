@@ -3,6 +3,7 @@
 
 #include <types.hpp>
 #include <Extra/AutoConnectTypes.hpp>
+#include <Extra/EmulatorDetection.hpp>
 
 namespace Pulsar {
 namespace AutoConnect {
@@ -45,8 +46,9 @@ public:
     /**
      * @brief Check if auto-connection is enabled and available
      * 
-     * Performs Dolphin detection and checks if auto-connection should be active.
-     * This includes checking emulator status and system readiness.
+     * Performs robust Dolphin detection and checks if auto-connection should be active.
+     * This includes checking emulator status, IOS communication availability,
+     * and system readiness using the EmulatorDetection system.
      * 
      * @return true if auto-connection is enabled and available, false otherwise
      */

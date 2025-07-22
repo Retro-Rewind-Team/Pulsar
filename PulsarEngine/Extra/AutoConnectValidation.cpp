@@ -166,6 +166,14 @@ const char* GetErrorDescription(AutoConnectError error) {
             return "System not ready for auto-connection";
         case ERROR_INITIALIZATION_FAILED:
             return "Auto-connect system initialization failed";
+        case ERROR_CONSOLE_HARDWARE_DETECTED:
+            return "Console hardware detected, auto-connect disabled";
+        case ERROR_IOS_COMMUNICATION_UNRELIABLE:
+            return "IOS communication is unreliable";
+        case ERROR_EMULATOR_DETECTION_FAILED:
+            return "Emulator detection failed";
+        case ERROR_AUTO_CONNECT_FORCED_DISABLED:
+            return "Auto-connect forcibly disabled";
             
         default:
             return "Unknown error";

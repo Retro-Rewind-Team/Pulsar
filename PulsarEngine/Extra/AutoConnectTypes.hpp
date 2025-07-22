@@ -62,7 +62,11 @@ enum AutoConnectError {
     // System errors
     ERROR_NOT_IN_DOLPHIN,              // Not running in Dolphin emulator
     ERROR_SYSTEM_NOT_READY,            // System not ready for auto-connect
-    ERROR_INITIALIZATION_FAILED        // Auto-connect system initialization failed
+    ERROR_INITIALIZATION_FAILED,       // Auto-connect system initialization failed
+    ERROR_CONSOLE_HARDWARE_DETECTED,   // Console hardware detected, auto-connect disabled
+    ERROR_IOS_COMMUNICATION_UNRELIABLE, // IOS communication is unreliable
+    ERROR_EMULATOR_DETECTION_FAILED,   // Emulator detection failed
+    ERROR_AUTO_CONNECT_FORCED_DISABLED // Auto-connect forcibly disabled
 };
 
 /**

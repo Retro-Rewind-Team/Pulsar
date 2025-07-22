@@ -3,6 +3,7 @@
 #include <Extra/AutoConnectValidation.hpp>
 #include <Extra/LicenseSlotManager.hpp>
 #include <Extra/RoomConnectionHandler.hpp>
+#include <Extra/EmulatorDetection.hpp>
 
 // Simple string copy function since standard library isn't available
 static void StringCopy(char* dest, const char* src, u32 maxLen) {
@@ -59,8 +60,17 @@ bool DolphinRoomConnector::Initialize() {
     // Reset state
     Reset();
 
-    // Check if running in Dolphin emulator
-    isDolphinDetected = Dolphin::IsEmulator();
+    // Initialize the emulator detection system
+    EmulatorDetection& emulatorDetection = EmulatorDetection::GetInstance();
+    if (!emulatorDetection.Initialize()) {
+        // Failed to initialize emulator detection
+        config.isEnabled = false;
+        isInitialized = true;
+        return true;
+    }
+
+    // Use robust detection to check if running in Dolphin emulator
+    isDolphinDetected = emulatorDetection.IsDolphinEmulator();
     
     if (!isDolphinDetected) {
         // Not running in Dolphin emulator - auto-connect disabled
@@ -69,7 +79,23 @@ bool DolphinRoomConnector::Initialize() {
         return true;
     }
 
-    // Dolphin emulator detected - auto-connect available
+    // Check if IOS communication is available and reliable
+    if (!emulatorDetection.IsIOSCommunicationAvailable()) {
+        // IOS communication not available or unreliable
+        config.isEnabled = false;
+        isInitialized = true;
+        return true;
+    }
+
+    // Check if auto-connect should be enabled
+    if (!emulatorDetection.ShouldEnableAutoConnect()) {
+        // Auto-connect should not be enabled
+        config.isEnabled = false;
+        isInitialized = true;
+        return true;
+    }
+
+    // Dolphin emulator detected and all checks passed - auto-connect available
     
     // Enable auto-connection for Dolphin
     config.isEnabled = true;
@@ -131,7 +157,16 @@ bool DolphinRoomConnector::ProcessRoomParameter() {
 }
 
 bool DolphinRoomConnector::IsEnabled() const {
-    return isInitialized && isDolphinDetected && config.isEnabled;
+    // First check our internal state
+    if (!isInitialized || !config.isEnabled) {
+        return false;
+    }
+    
+    // Then perform a more robust check using EmulatorDetection
+    EmulatorDetection& emulatorDetection = EmulatorDetection::GetInstance();
+    
+    // Ensure we're running in Dolphin and auto-connect should be enabled
+    return emulatorDetection.ShouldEnableAutoConnect();
 }
 
 bool DolphinRoomConnector::IsConnectionInProgress() const {
@@ -214,12 +249,20 @@ bool DolphinRoomConnector::IsSystemReady() const {
         return false;
     }
 
-    // Check if we're in Dolphin
-    if (!isDolphinDetected) {
+    // Use robust emulator detection
+    EmulatorDetection& emulatorDetection = EmulatorDetection::GetInstance();
+    
+    // Check if we're in Dolphin with reliable IOS communication
+    if (!emulatorDetection.IsDolphinEmulator() || !emulatorDetection.IsIOSCommunicationAvailable()) {
         return false;
     }
 
-    // System is ready if we've passed basic initialization
+    // Check if auto-connect is forcibly disabled
+    if (emulatorDetection.IsAutoConnectForcedDisabled()) {
+        return false;
+    }
+
+    // System is ready if we've passed all checks
     return true;
 }
 
