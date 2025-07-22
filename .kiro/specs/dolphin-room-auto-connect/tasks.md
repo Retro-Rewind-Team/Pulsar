@@ -34,10 +34,6 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
 - [x] 5. Build room connection handler with network integration
-
-
-
-
   - Create RoomConnectionHandler.hpp with class interface
   - Implement ConnectToRoom() method using existing network infrastructure
   - Add ValidateRoomId() function with format checking
@@ -46,7 +42,12 @@
   This code does not support Unit tests, therefor you should NEVER WRITE ONE!!!!
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 6. Integrate auto-connector with PulsarEngine system initialization
+- [x] 6. Integrate auto-connector with PulsarEngine system initialization
+
+
+
+
+
   - Hook DolphinRoomConnector::Initialize() into System::Init()
   - Add auto-connection trigger during appropriate scene transitions
   - Implement proper initialization timing and dependencies

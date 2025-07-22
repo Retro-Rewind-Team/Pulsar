@@ -16,6 +16,7 @@
 #include <MarioKartWii/UI/Page/Other/FriendList.hpp>
 #include <RetroRewindChannel.hpp>
 #include <Dolphin/DolphinIOS.hpp>
+#include <Extra/AutoConnectIntegration.hpp>
 
 namespace Pulsar {
 
@@ -77,6 +78,11 @@ void System::Init(const ConfigFile& conf) {
     this->info.Init(conf.GetSection<InfoHolder>().info);
     this->InitIO(type);
     this->InitSettings(&conf.GetSection<CupsHolder>().trophyCount[0]);
+    
+    // Initialize auto-connection system if running in Dolphin
+    if (isDolphin) {
+        AutoConnect::Integration::InitializeSystem(*this);
+    }
 
 
     //Initialize last selected cup and courses
@@ -345,8 +351,13 @@ static Pulsar::Settings::Hook UpdateOTTContext(System::ClearOttContext);
 s32 System::OnSceneEnter(Random& random) {
     System* self = System::sInstance;
     self->UpdateContext();
+    
+    // Process auto-connection during scene transitions
+    const u32 sceneId = GameScene::GetCurrent()->id;
+    AutoConnect::Integration::ProcessSceneTransition(sceneId);
+    
     if(self->IsContext(PULSAR_MODE_OTT)) OTT::AddGhostToVS();
-    if(self->IsContext(PULSAR_HAW) && self->IsContext(PULSAR_MODE_KO) && GameScene::GetCurrent()->id == SCENE_ID_RACE && SectionMgr::sInstance->sectionParams->onlineParams.currentRaceNumber > 0) {
+    if(self->IsContext(PULSAR_HAW) && self->IsContext(PULSAR_MODE_KO) && sceneId == SCENE_ID_RACE && SectionMgr::sInstance->sectionParams->onlineParams.currentRaceNumber > 0) {
         KO::HAWChangeData();
     }
     return random.NextLimited(8);
