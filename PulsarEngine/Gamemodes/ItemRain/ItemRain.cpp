@@ -27,7 +27,7 @@ void ItemModeCheck() {
         }
         else {
             ITEMS_PER_SPAWN = 1;
-            MAX_ITEM_LIFETIME = 300;
+            MAX_ITEM_LIFETIME = 200;
         }
     }
 }
