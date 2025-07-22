@@ -23,11 +23,11 @@ void ItemModeCheck() {
         RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_NONE) {
         if (Pulsar::System::sInstance->IsContext(PULSAR_ITEMMODESTORM)) {
             ITEMS_PER_SPAWN = 3;
-            MAX_ITEM_LIFETIME = 90;
+            MAX_ITEM_LIFETIME = 360;
         }
         else {
             ITEMS_PER_SPAWN = 1;
-            MAX_ITEM_LIFETIME = 200;
+            MAX_ITEM_LIFETIME = 600;
         }
     }
 }
@@ -101,7 +101,7 @@ void DespawnItems(bool checkDistance = false) {
             Item::Obj* obj = holder.itemObj[j];
             if (!obj || (obj->bitfield74 & 0x1)) continue;
             bool shouldDespawn = obj->duration > MAX_ITEM_LIFETIME;
-            if (checkDistance && obj->duration >= 900) {
+            if (checkDistance && obj->duration >= 300) {
                 bool farFromAll = true;
                 for (int k = 0; k < playerCount && k < 12 && farFromAll; k++) {
                     Vec3 diff;
@@ -150,7 +150,9 @@ void SpawnItemRain() {
     dummyDirection.z = 0.0f;
 
     for (int i = 0; i < ITEMS_PER_SPAWN; i++) {
-        for (int playerIdx = 0; playerIdx < playerCount; playerIdx++) {
+        int spawnDivisor = (sRaceInfoFrameCounter < 300) ? 4 : 1; 
+
+        for (int playerIdx = 0; playerIdx < playerCount; playerIdx += spawnDivisor) {
             Item::Player& player = Item::Manager::sInstance->players[playerIdx];
             Vec3 playerPos = player.GetPosition();
             Vec3 forwardDir;
