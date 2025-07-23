@@ -23,7 +23,7 @@ void ItemModeCheck() {
         RKNet::Controller::sInstance->roomType == RKNet::ROOMTYPE_NONE) {
         if (Pulsar::System::sInstance->IsContext(PULSAR_ITEMMODESTORM)) {
             ITEMS_PER_SPAWN = 3;
-            MAX_ITEM_LIFETIME = 360;
+            MAX_ITEM_LIFETIME = 180;
         }
         else {
             ITEMS_PER_SPAWN = 1;
